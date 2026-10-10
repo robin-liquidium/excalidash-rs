@@ -42,18 +42,23 @@ def logs(c):
     return p.stdout + p.stderr
 
 
-def pid_of(c):
-    return int(subprocess.check_output(["docker", "inspect", "-f", "{{.State.Pid}}", c], text=True).strip())
+def pids_of(c):
+    """Every process in the container (init, node, nginx master + workers)."""
+    out = subprocess.check_output(["docker", "top", c, "-eo", "pid"], text=True).split()[1:]
+    return [int(p) for p in out if p.isdigit()]
 
 
-def proc_mem(pid):
-    out = {}
-    with open(f"/proc/{pid}/status") as f:
-        for line in f:
-            if line.startswith(("VmRSS", "VmHWM")):
-                k, v = line.split(":")
-                out[k] = int(v.strip().split()[0])  # kB
-    # Include children (node spawns none; keep generic).
+def proc_mem(pids):
+    out = {"VmRSS": 0, "VmHWM": 0}
+    for pid in pids:
+        try:
+            with open(f"/proc/{pid}/status") as f:
+                for line in f:
+                    if line.startswith(("VmRSS", "VmHWM")):
+                        k, v = line.split(":")
+                        out[k] += int(v.strip().split()[0])  # kB
+        except FileNotFoundError:
+            pass
     return out
 
 
@@ -69,7 +74,7 @@ def snapshot(label):
     total_rss = 0
     detail = {}
     for c in containers:
-        m = proc_mem(pid_of(c))
+        m = proc_mem(pids_of(c))
         total_rss += m["VmRSS"]
         detail[c] = {"rss_mib": round(m["VmRSS"] / 1024, 2), "hwm_mib": round(m["VmHWM"] / 1024, 2), "cgroup_mib": cgroup_mib(c)}
     print(f"[{label}] total RSS {total_rss / 1024:.1f} MiB  {json.dumps(detail)}")
@@ -107,7 +112,7 @@ done = threading.Event()
 
 def sampler():
     while not done.is_set():
-        s = sum(proc_mem(pid_of(c))["VmRSS"] for c in containers) / 1024
+        s = sum(proc_mem(pids_of(c))["VmRSS"] for c in containers) / 1024
         if s > peak["v"]:
             peak["v"] = s
         time.sleep(0.5)
