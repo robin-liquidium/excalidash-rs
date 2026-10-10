@@ -1,0 +1,32 @@
+# Upstream ExcaliDash 0.6.5 reference stack for parity/differential tests.
+# Never points at live volumes. Port 16767 (frontend), 18000 (backend direct).
+name: exrs-ref
+services:
+  backend:
+    image: zimengxiong/excalidash-backend:0.6.5
+    init: true
+    environment:
+      DATABASE_PROVIDER: sqlite
+      DATABASE_URL: file:/app/prisma/dev.db
+      PORT: "8000"
+      NODE_ENV: ${REF_NODE_ENV:-production}
+      AUTH_MODE: ${REF_AUTH_MODE:-local}
+      FRONTEND_URL: ${REF_FRONTEND_URL:-http://localhost:16767}
+      TRUST_PROXY: "1"
+      JWT_SECRET: ref-jwt-secret-0123456789abcdef0123456789abcdef
+      CSRF_SECRET: ref-csrf-secret-0123456789abcdef
+      API_KEY_HASH_PEPPER: ref-pepper
+      UPDATE_CHECK_OUTBOUND: "false"
+      CSRF_MAX_REQUESTS: ${REF_CSRF_MAX:-60}
+      RATE_LIMIT_MAX_REQUESTS: ${REF_RATE_MAX:-1000}
+    volumes:
+      - data:/app/prisma
+    ports:
+      - "127.0.0.1:18000:8000"
+  frontend:
+    image: zimengxiong/excalidash-frontend:0.6.5
+    depends_on: [backend]
+    ports:
+      - "127.0.0.1:16767:8080"
+volumes:
+  data: {}

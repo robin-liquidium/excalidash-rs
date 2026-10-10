@@ -1,0 +1,286 @@
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../src/generated/client"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String              @id @default(uuid())
+  username            String?             @unique
+  email               String              @unique
+  passwordHash        String
+  name                String
+  role                String              @default("USER")
+  mustResetPassword   Boolean             @default(false)
+  isActive            Boolean             @default(true)
+  preferences         String?
+  authIdentities      AuthIdentity[]
+  drawings            Drawing[]
+  collections         Collection[]
+  drawingPermissions  DrawingPermission[]
+  collectionShares    CollectionShare[]
+  passwordResetTokens PasswordResetToken[]
+  refreshTokens       RefreshToken[]
+  apiKeys             ApiKey[]
+  auditLogs           AuditLog[]
+  chatGptConnection   ChatGptConnection?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+}
+
+model SystemConfig {
+  id                         String   @id @default("default")
+  authEnabled                Boolean  @default(false)
+  authOnboardingCompleted    Boolean  @default(false)
+  registrationEnabled        Boolean  @default(false)
+  oidcJitProvisioningEnabled Boolean?
+  authLoginRateLimitEnabled  Boolean  @default(true)
+  authLoginRateLimitWindowMs Int      @default(900000)
+  authLoginRateLimitMax      Int      @default(20)
+  bootstrapSetupCodeHash     String?
+  bootstrapSetupCodeIssuedAt DateTime?
+  bootstrapSetupCodeExpiresAt DateTime?
+  bootstrapSetupCodeFailedAttempts Int @default(0)
+  // Legacy AI data is retained for non-destructive upgrades; dev has no AI routes.
+  aiProvider                 String?
+  aiBaseUrl                  String?
+  aiModel                    String?
+  aiApiKeyEncrypted          String?
+  // Admin kill-switch for the per-user ChatGPT subscription provider. Null means enabled.
+  aiChatgptEnabled           Boolean?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+}
+
+model ChatGptConnection {
+  userId                String   @id
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId             String
+  accessTokenEncrypted  String
+  refreshTokenEncrypted String
+  expiresAt             BigInt
+  accountEmail          String?
+  planType              String?
+  needsReconnect        Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model ChatGptAuthState {
+  state        String   @id
+  userId       String
+  codeVerifier String
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Collection {
+  id        String            @id @default(uuid())
+  name      String
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  drawings  Drawing[]
+  shares    CollectionShare[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@index([userId, updatedAt])
+}
+
+model Drawing {
+  id           String      @id @default(uuid())
+  name         String
+  elements     String
+  appState     String
+  files        String      @default("{}")
+  preview      String?
+  version      Int         @default(1)
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  collectionId String?
+  collection   Collection? @relation(fields: [collectionId], references: [id])
+  permissions  DrawingPermission[]
+  linkShares   DrawingLinkShare[]
+  snapshots    DrawingSnapshot[]
+  agentKeys    ApiKey[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([userId, updatedAt])
+  @@index([userId, collectionId, updatedAt])
+}
+
+model DrawingSnapshot {
+  id        String   @id @default(uuid())
+  drawingId String
+  drawing   Drawing  @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  version   Int
+  elements  String   // JSON string (state before update)
+  appState  String   // JSON string
+  files     String   @default("{}")
+  createdAt DateTime @default(now())
+
+  @@index([drawingId, createdAt])
+  @@index([createdAt])
+}
+
+model DrawingPermission {
+  id              String   @id @default(uuid())
+  drawingId       String
+  drawing         Drawing  @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  granteeUserId   String
+  granteeUser     User     @relation(fields: [granteeUserId], references: [id], onDelete: Cascade)
+  permission      String
+  // Per-recipient flag so a grantee can hide a shared drawing from their own
+  // "Shared with me" list without affecting the owner or other recipients.
+  hidden          Boolean  @default(false)
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([drawingId, granteeUserId], name: "drawingId_granteeUserId")
+  @@index([granteeUserId])
+  @@index([drawingId])
+}
+
+model DrawingLinkShare {
+  id              String    @id @default(uuid())
+  drawingId       String
+  drawing         Drawing   @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  permission      String
+  tokenHash       String    @unique
+  passphraseHash  String?
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  failedAttempts  Int       @default(0)
+  lockedUntil     DateTime?
+  lastUsedAt      DateTime?
+  lastUsedIp      String?
+  createdByUserId String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([drawingId])
+}
+
+model CollectionShare {
+  id              String     @id @default(uuid())
+  collectionId    String
+  collection      Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  granteeUserId   String
+  granteeUser     User       @relation(fields: [granteeUserId], references: [id], onDelete: Cascade)
+  role            String     @default("view")
+  createdByUserId String
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([collectionId, granteeUserId])
+  @@index([collectionId])
+  @@index([granteeUserId])
+}
+
+model Library {
+  id        String   @id
+  items     String   @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model ApiKey {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  keyId      String    @unique
+  tokenHash  String    @unique
+  prefix     String
+  scopes     String    @default("drawings:read,drawings:write,collections:read,collections:write")
+  drawingId  String?
+  drawing    Drawing?  @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([keyId, revokedAt])
+  @@index([drawingId])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  resource  String?
+  ipAddress String?
+  userAgent String?
+  details   String?
+  createdAt DateTime @default(now())
+}
+
+model AuthIdentity {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider    String
+  issuer      String
+  subject     String
+  emailAtLink String
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([issuer, subject])
+  @@unique([provider, userId])
+  @@index([userId])
+}
+
+/// Per-(drawing, fileId) image blob record. Excalidraw fileIds are content
+/// hashes that legitimately repeat across drawings, so the primary key
+/// includes drawingId to keep each reference accounted for separately.
+///
+/// Two storage backends share this one table:
+///   - storage = "db": bytes live in `data` (sqlite BLOB / postgres BYTEA).
+///   - storage = "s3": bytes live in S3 at `s3Key`; `data` is null.
+/// (drawingId, fileId) is content-addressed and immutable, so uploads are
+/// idempotent — no version/merge concerns for blobs.
+model DrawingFile {
+  drawingId String
+  fileId    String   // Excalidraw fileId (same id used in Drawing.files)
+  mimeType  String
+  sizeBytes Int      @default(0)
+  storage   String   // "db" | "s3"
+  s3Key     String?  // set when storage = "s3"; full object key
+  data      Bytes?   // set when storage = "db"; raw image bytes
+  createdAt DateTime @default(now())
+
+  @@id([drawingId, fileId])
+  @@index([drawingId])
+}
