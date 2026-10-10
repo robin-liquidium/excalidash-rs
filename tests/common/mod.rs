@@ -322,3 +322,85 @@ pub fn login(server: &TestServer, email: &str, password: &str) -> TestClient {
 pub fn install_crypto() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
+
+// ---------------------------------------------------------------------------
+// Seeding helpers (independent of the /auth routes).
+
+pub const TEST_JWT_SECRET: &str = "test-jwt-secret-0123456789abcdef0123456789abcdef";
+
+/// Mark auth as enabled + onboarding completed (call right after `start`).
+pub fn enable_auth(server: &TestServer) {
+    let now = chrono::Utc::now().timestamp_millis();
+    server
+        .db()
+        .execute(
+            r#"INSERT INTO "SystemConfig" ("id","authEnabled","authOnboardingCompleted","registrationEnabled","authLoginRateLimitEnabled","authLoginRateLimitWindowMs","authLoginRateLimitMax","createdAt","updatedAt")
+               VALUES ('default',1,1,0,1,900000,20,?1,?1)
+               ON CONFLICT("id") DO UPDATE SET "authEnabled"=1, "authOnboardingCompleted"=1, "updatedAt"=?1"#,
+            [now],
+        )
+        .unwrap();
+}
+
+/// Insert an active user with password STRONG_PASSWORD; returns its id.
+pub fn seed_user(server: &TestServer, email: &str, name: &str, role: &str) -> String {
+    let id = uuid::Uuid::new_v4().to_string();
+    let hash = bcrypt::hash(STRONG_PASSWORD, 4).unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    server
+        .db()
+        .execute(
+            r#"INSERT INTO "User" ("id","username","email","passwordHash","name","role","mustResetPassword","isActive","createdAt","updatedAt")
+               VALUES (?1,NULL,?2,?3,?4,?5,0,1,?6,?6)"#,
+            rusqlite::params![id, email.to_lowercase(), hash, name, role, now],
+        )
+        .unwrap();
+    id
+}
+
+/// Access token exactly like auth.ts generateTokens (HS256, 15m).
+pub fn mint_access_token(user_id: &str, email: &str) -> String {
+    let now = chrono::Utc::now().timestamp();
+    let claims = serde_json::json!({
+        "userId": user_id, "email": email, "authProvider": "local", "type": "access",
+        "iat": now, "exp": now + 900, "jti": uuid::Uuid::new_v4().to_string(),
+    });
+    jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(TEST_JWT_SECRET.as_bytes()),
+    )
+    .unwrap()
+}
+
+/// Client authenticated via the access-token cookie, with a CSRF token.
+pub fn session_client(server: &TestServer, user_id: &str, email: &str) -> TestClient {
+    let mut c = server.client();
+    let token = mint_access_token(user_id, email);
+    c = c.with_header("Cookie", &format!("excalidash-access-token={token}"));
+    c.fetch_csrf_with_cookie_header();
+    c
+}
+
+impl TestClient {
+    /// fetch_csrf when a manual Cookie header is used (cookie jar is bypassed).
+    pub fn fetch_csrf_with_cookie_header(&mut self) {
+        let r = self.get("/csrf-token");
+        assert_eq!(r.status, 200, "csrf-token: {}", r.text());
+        let token = r.json()["token"].as_str().unwrap().to_string();
+        if let Some(set) = r.header("set-cookie") {
+            let csrf_cookie = set.split(';').next().unwrap().to_string();
+            let existing = self.extra.get("cookie").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let merged = if existing.is_empty() { csrf_cookie } else { format!("{existing}; {csrf_cookie}") };
+            self.extra.insert("cookie", HeaderValue::from_str(&merged).unwrap());
+        }
+        self.csrf = Some(token);
+    }
+}
+
+/// enable_auth + seed a user + authenticated client in one go.
+pub fn user_session(server: &TestServer, email: &str, role: &str) -> (TestClient, String) {
+    enable_auth(server);
+    let id = seed_user(server, email, "Test User", role);
+    (session_client(server, &id, &email.to_lowercase()), id)
+}
