@@ -149,14 +149,10 @@ async fn async_main() {
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    // Pre-resolve the DB path so the entrypoint can persist secrets beside it.
-    let pre = Config::from_env(&ProcessEnv, backend_root.clone());
-    if let Ok(pre) = &pre {
-        if let Some(dir) = pre.database_path.parent() {
-            entrypoint(dir);
-        }
-    } else {
-        entrypoint(&backend_root.join("prisma"));
+    // Resolve the DB path first so the entrypoint can persist secrets beside it.
+    match config::resolve_database_url(&backend_root, std::env::var("DATABASE_URL").ok()) {
+        Ok((_, path)) => entrypoint(path.parent().unwrap_or(&backend_root)),
+        Err(_) => entrypoint(&backend_root.join("prisma")),
     }
     let cfg = match Config::from_env(&ProcessEnv, backend_root) {
         Ok(c) => config::init(c),

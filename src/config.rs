@@ -339,7 +339,7 @@ pub fn normalize_origins(raw: Option<&str>) -> Vec<String> {
     }
 }
 
-fn resolve_database_url(backend_root: &Path, raw: Option<String>) -> Result<(String, PathBuf), String> {
+pub fn resolve_database_url(backend_root: &Path, raw: Option<String>) -> Result<(String, PathBuf), String> {
     let default_path = backend_root.join("prisma/dev.db");
     let raw = match raw {
         Some(r) if !r.trim().is_empty() => r,
