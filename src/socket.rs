@@ -198,8 +198,12 @@ fn remove_socket_from_rooms(room_ids: &[String], socket_id: &str) -> Vec<(String
     changed
 }
 
+/// Broadcast emits return a future that must be driven, or nothing is sent.
 fn emit_presence(io: &SocketIo, room: &str, users: &[PresenceUser]) {
-    let _ = io.to(room.to_string()).emit("presence-update", &users);
+    let (io, room, users) = (io.clone(), room.to_string(), users.to_vec());
+    tokio::spawn(async move {
+        let _ = io.to(room).emit("presence-update", &users).await;
+    });
 }
 
 fn drop_drawing_access(s: &SocketRef, io: &SocketIo, state: &SocketState, drawing_id: &str) {
@@ -282,7 +286,7 @@ async fn on_connect(s: SocketRef, io: SocketIo) {
                 list.push(new_user.clone());
                 list.clone()
             };
-            emit_presence(&io, &room, &users);
+            let _ = io.to(room.clone()).emit("presence-update", &users).await;
             let _ = ack.send(&json!({
                 "user": {
                     "id": new_user.id,
@@ -316,7 +320,7 @@ async fn on_connect(s: SocketRef, io: SocketIo) {
             data.insert("userId".into(), Value::String(me.id));
             data.insert("username".into(), Value::String(me.name));
             data.insert("color".into(), Value::String(me.color));
-            let _ = s.to(room).volatile().emit("cursor-move", &Value::Object(data));
+            let _ = s.to(room).volatile().emit("cursor-move", &Value::Object(data)).await;
         });
     }
 
@@ -350,7 +354,7 @@ async fn on_connect(s: SocketRef, io: SocketIo) {
                 let _ = s.emit("error", &json!({"message": "Read-only access: cannot edit this drawing"}));
                 return;
             }
-            let _ = s.to(format!("drawing_{drawing_id}")).emit("element-update", &data);
+            let _ = s.to(format!("drawing_{drawing_id}")).emit("element-update", &data).await;
         });
     }
 
@@ -445,6 +449,9 @@ pub async fn revalidate_drawing_access(st: &AppState, drawing_id: &str) {
 /// Emit an event to everyone in a drawing room (used by HTTP routes).
 pub fn emit_to_drawing(st: &AppState, drawing_id: &str, event: &'static str, payload: &Value) {
     if let Some(io) = st.io() {
-        let _ = io.to(format!("drawing_{drawing_id}")).emit(event, payload);
+        let (io, room, payload) = (io.clone(), format!("drawing_{drawing_id}"), payload.clone());
+        tokio::spawn(async move {
+            let _ = io.to(room).emit(event, &payload).await;
+        });
     }
 }
