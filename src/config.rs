@@ -693,6 +693,8 @@ impl Config {
         let port = env.number("PORT", 8000.0)?;
         let body_limit_mb = env.number("BODY_LIMIT_MB", 50.0)?;
         let frontend_dist_dir = match env.opt_string("FRONTEND_DIST_DIR") {
+            // "none" disables the bundled frontend (backend-only, like the upstream backend image).
+            Some(p) if p == "none" => None,
             Some(p) => Some(PathBuf::from(p)),
             None => {
                 let default = backend_root.join("public");

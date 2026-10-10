@@ -114,8 +114,8 @@ fn healthcheck() -> ! {
     use std::io::{Read, Write};
     let port = std::env::var("PORT").ok().and_then(|p| p.parse::<u16>().ok()).unwrap_or(8000);
     // With the frontend bundled, /health is the SPA; the API lives under /api.
-    let combined = std::env::var("FRONTEND_DIST_DIR").map(|d| !d.is_empty()).unwrap_or(false)
-        || std::path::Path::new("public/index.html").is_file();
+    let dist = std::env::var("FRONTEND_DIST_DIR").unwrap_or_default();
+    let combined = dist != "none" && (!dist.is_empty() || std::path::Path::new("public/index.html").is_file());
     let path = if combined { "/api/health" } else { "/health" };
     let ok = (|| -> std::io::Result<bool> {
         let mut s = std::net::TcpStream::connect(("127.0.0.1", port))?;
