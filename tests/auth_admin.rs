@@ -380,7 +380,8 @@ fn admin_reset_user_password() {
     assert_eq!(keys(&body), ["user", "tempPassword"]);
     assert_eq!(body["user"], json!({"id": uid, "email": "target@test.local", "username": "target", "role": "USER"}));
     let temp = body["tempPassword"].as_str().unwrap();
-    assert_eq!(temp.len(), 24);
+    // Upstream strips +/= from 24 base64 chars, so the length varies (<= 24).
+    assert!(temp.len() <= 24 && temp.len() >= 12, "{temp}");
     assert!(temp.chars().all(|c| c.is_ascii_alphanumeric()));
     let (hash, must_reset, active): (String, bool, bool) = db
         .query_row(r#"SELECT "passwordHash","mustResetPassword","isActive" FROM "User" WHERE "id" = ?1"#, [&uid], |r| {
