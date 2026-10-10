@@ -365,11 +365,31 @@ pub async fn update_drawing(State(st): State<AppState>, ctx: Ctx, Path(id): Path
     ok(Value::Object(m))
 }
 
-/// cleanupS3FilesForDrawing (database rows; S3 objects when S3 is enabled).
-async fn cleanup_files_for_drawing(st: &AppState, drawing_id: &str) -> Result<(), ApiError> {
+/// cleanupS3FilesForDrawing: delete S3 objects (prefix listing + recorded keys)
+/// when S3 is enabled, then the DrawingFile rows (db bytes live in the rows).
+async fn cleanup_files_for_drawing(st: &AppState, drawing_id: &str, user_id: &str) -> Result<(), ApiError> {
     if crate::s3::is_s3_enabled() {
-        // TODO(s3): delete listS3Objects(drawingS3Prefix) + recorded s3Keys once src/s3.rs exposes them.
-        eprintln!("[s3] object cleanup for drawing {drawing_id} is not available in this build");
+        let prefix = crate::s3::drawing_s3_prefix(user_id, drawing_id);
+        let did = drawing_id.to_string();
+        let (objects, records) = tokio::join!(
+            crate::s3::list_s3_objects(st.http(), &prefix),
+            st.db.call(move |c| {
+                let mut stmt = c.prepare(r#"SELECT "s3Key" FROM "DrawingFile" WHERE "drawingId" = ?1"#)?;
+                let keys: Vec<Option<String>> = stmt.query_map([&did], |r| r.get(0))?.collect::<Result<_, _>>()?;
+                Ok(keys)
+            })
+        );
+        let objects = objects.map_err(|e| ApiError::internal(e.to_string()))?;
+        let records = records?;
+        let mut keys: Vec<String> = objects.into_iter().map(|o| o.key).collect();
+        for k in records.into_iter().flatten() {
+            if !k.is_empty() && !keys.contains(&k) {
+                keys.push(k);
+            }
+        }
+        // Promise.allSettled: failures are ignored.
+        let http = st.http();
+        futures_util::future::join_all(keys.iter().map(|k| crate::s3::delete_s3_object(http, k))).await;
     }
     let id = drawing_id.to_string();
     st.db
@@ -397,7 +417,7 @@ pub async fn delete_drawing(State(st): State<AppState>, ctx: Ctx, Path(id): Path
         })
         .await?;
     let Some(name) = name else { return Err(err_only(404, "Drawing not found")) };
-    if let Err(e) = cleanup_files_for_drawing(&st, &id).await {
+    if let Err(e) = cleanup_files_for_drawing(&st, &id, &user.id).await {
         eprintln!("[s3] Failed to cleanup deleted drawing files {{ drawingId: {id:?}, error: {e:?} }}");
     }
     let (id2, uid) = (id.clone(), user.id.clone());
@@ -413,45 +433,118 @@ pub async fn delete_drawing(State(st): State<AppState>, ctx: Ctx, Path(id): Path
     ok(json!({ "success": true }))
 }
 
-/// cloneS3FileReferences (database-bytes mode; S3 records keep their URLs until s3.rs lands).
+struct FileRecord {
+    file_id: String,
+    mime_type: String,
+    size_bytes: i64,
+    storage: String,
+    s3_key: Option<String>,
+}
+
+fn set_cloned_data_url(cloned: &mut Map<String, Value>, file_id: &str, url: String) {
+    // `if (clonedFiles[id]) clonedFiles[id] = { ...clonedFiles[id], dataURL }`
+    let Some(entry) = cloned.get_mut(file_id) else { return };
+    let truthy = match entry {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(true),
+        Value::String(s) => !s.is_empty(),
+        _ => true,
+    };
+    if !truthy {
+        return;
+    }
+    let mut obj = match entry {
+        Value::Object(m) => m.clone(),
+        Value::String(s) => s.chars().enumerate().map(|(i, c)| (i.to_string(), Value::String(c.to_string()))).collect(),
+        Value::Array(a) => a.iter().enumerate().map(|(i, v)| (i.to_string(), v.clone())).collect(),
+        _ => Map::new(),
+    };
+    obj.insert("dataURL".into(), Value::String(url));
+    *entry = Value::Object(obj);
+}
+
+/// cloneS3FileReferences: copy DrawingFile rows (S3 objects or db bytes) to the new drawing.
 async fn clone_file_references(
     st: &AppState,
     source: &str,
     target: &str,
+    user_id: &str,
     files: Map<String, Value>,
 ) -> Result<Map<String, Value>, ApiError> {
-    let (s, t) = (source.to_string(), target.to_string());
-    Ok(st
+    let s = source.to_string();
+    let records: Vec<FileRecord> = st
         .db
         .call(move |c| {
-            let mut stmt = c.prepare(r#"SELECT "fileId","storage" FROM "DrawingFile" WHERE "drawingId" = ?1"#)?;
-            let records: Vec<(String, String)> =
-                stmt.query_map([&s], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
-            let mut cloned = files;
-            for (file_id, storage) in records {
-                if storage == "s3" {
-                    // TODO(s3): copyS3Object to the target drawing prefix.
-                    eprintln!("[s3] cloning S3-backed file {file_id} is not available in this build");
-                    continue;
-                }
-                c.execute(
-                    r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt")
-                       SELECT ?1,"fileId","mimeType","sizeBytes",'db',NULL,"data",?4 FROM "DrawingFile" WHERE "drawingId" = ?2 AND "fileId" = ?3
-                       ON CONFLICT("drawingId","fileId") DO UPDATE SET "storage"='db',"s3Key"=NULL,"data"=excluded."data","mimeType"=excluded."mimeType","sizeBytes"=excluded."sizeBytes""#,
-                    rusqlite::params![t, s, file_id, crate::util::now_ms()],
-                )?;
-                if let Some(Value::Object(f)) = cloned.get_mut(&file_id) {
-                    f.insert("dataURL".into(), json!(format!("/api/files/{t}/{file_id}")));
-                } else if let Some(entry) = cloned.get_mut(&file_id) {
-                    if !entry.is_null() {
-                        // `{...nonObject, dataURL}` spreads to a plain object.
-                        *entry = json!({ "dataURL": format!("/api/files/{t}/{file_id}") });
-                    }
-                }
-            }
-            Ok(cloned)
+            let mut stmt = c.prepare(
+                r#"SELECT "fileId","mimeType","sizeBytes","storage","s3Key" FROM "DrawingFile" WHERE "drawingId" = ?1"#,
+            )?;
+            let rows = stmt
+                .query_map([&s], |r| {
+                    Ok(FileRecord {
+                        file_id: r.get(0)?,
+                        mime_type: r.get(1)?,
+                        size_bytes: r.get(2)?,
+                        storage: r.get(3)?,
+                        s3_key: r.get(4)?,
+                    })
+                })?
+                .collect::<Result<_, _>>()?;
+            Ok(rows)
         })
-        .await?)
+        .await?;
+    if records.is_empty() {
+        return Ok(files);
+    }
+    let public_base = if crate::s3::is_s3_enabled() { crate::s3::public_url_base() } else { None };
+    let mut cloned = files;
+    for rec in records {
+        let (t, s, fid) = (target.to_string(), source.to_string(), rec.file_id.clone());
+        match rec.s3_key.as_deref().filter(|k| rec.storage == "s3" && !k.is_empty()) {
+            Some(src_key) => {
+                let ext = match src_key.rfind('.') {
+                    Some(i) => src_key[i + 1..].to_string(),
+                    None => "bin".to_string(),
+                };
+                let target_key = crate::s3::build_s3_key(user_id, target, &rec.file_id, &ext, None);
+                crate::s3::copy_s3_object(st.http(), src_key, &target_key, Some(&rec.mime_type))
+                    .await
+                    .map_err(|e| ApiError::internal(e.to_string()))?;
+                let (key, mime, size) = (target_key.clone(), rec.mime_type.clone(), rec.size_bytes);
+                st.db
+                    .call(move |c| {
+                        c.execute(
+                            r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt")
+                               VALUES (?1,?2,?3,?4,'s3',?5,NULL,?6)
+                               ON CONFLICT("drawingId","fileId") DO UPDATE SET "storage"='s3',"s3Key"=excluded."s3Key","data"=NULL,"mimeType"=excluded."mimeType","sizeBytes"=excluded."sizeBytes""#,
+                            rusqlite::params![t, fid, mime, size, key, crate::util::now_ms()],
+                        )?;
+                        Ok(())
+                    })
+                    .await?;
+                let url = match public_base {
+                    Some(_) => crate::s3::get_public_url(&target_key).map_err(|e| ApiError::internal(e.to_string()))?,
+                    None => format!("/api/files/{target}/{}", rec.file_id),
+                };
+                set_cloned_data_url(&mut cloned, &rec.file_id, url);
+            }
+            None => {
+                st.db
+                    .call(move |c| {
+                        c.execute(
+                            r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt")
+                               SELECT ?1,"fileId","mimeType","sizeBytes",'db',NULL,"data",?4 FROM "DrawingFile" WHERE "drawingId" = ?2 AND "fileId" = ?3
+                               ON CONFLICT("drawingId","fileId") DO UPDATE SET "storage"='db',"s3Key"=NULL,"data"=excluded."data","mimeType"=excluded."mimeType","sizeBytes"=excluded."sizeBytes""#,
+                            rusqlite::params![t, s, fid, crate::util::now_ms()],
+                        )?;
+                        Ok(())
+                    })
+                    .await?;
+                set_cloned_data_url(&mut cloned, &rec.file_id, format!("/api/files/{target}/{}", rec.file_id));
+            }
+        }
+    }
+    Ok(cloned)
 }
 
 /// POST /drawings/:id/duplicate
@@ -474,7 +567,7 @@ pub async fn duplicate_drawing(State(st): State<AppState>, ctx: Ctx, Path(id): P
         Value::Object(m) => m,
         _ => Map::new(),
     };
-    let dup_files = clone_file_references(&st, &original.id, &new_id, original_files.clone()).await?;
+    let dup_files = clone_file_references(&st, &original.id, &new_id, &user.id, original_files.clone()).await?;
     let preview_in = opt_str_json(original.preview.clone());
     let preview = match rewrite_preview_for_interned_files(&preview_in, &original_files, &dup_files) {
         Value::String(s) => Some(s),

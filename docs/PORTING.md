@@ -62,8 +62,8 @@ upstream frontend must not notice any difference, and an existing Prisma SQLite
 - **Every UPDATE (incl. `updateMany`) on a model with `@updatedAt` must set `"updatedAt"`**.
 - Foreign keys are ON (cascades come from the DDL). Unique violations ≈ Prisma P2002 →
   `DbError::is_unique_violation()`.
-- Prisma `contains`/`startsWith` on SQLite compile to `LIKE` (ASCII case-insensitive), with
-  `%`, `_` escaped. `orderBy` with ties: add nothing beyond what upstream asks.
+- Prisma `contains`/`startsWith` on SQLite compile to `LIKE` (ASCII case-insensitive); Prisma 5
+  does **not** escape `%`/`_` in the search value (verified against upstream), so neither do we. `orderBy` with ties: add nothing beyond what upstream asks.
 - Table/column names are quoted camelCase: `"Drawing"."collectionId"`.
 
 ## Express quirks to keep

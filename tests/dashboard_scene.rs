@@ -37,7 +37,6 @@ fn unions_incoming_files_with_existing_files_instead_of_whole_replacing() {
 }
 
 #[test]
-#[ignore = "needs the real intern_drawing_files (src/files.rs, owned by the files port)"]
 fn overwrites_an_existing_file_entry_with_new_content_and_interns_it() {
     let (s, c, owner) = merge_world(&[]);
     let d = drawing_with_files(&s, &owner, json!({"file-a": file_entry("file-a", "data:image/png;base64,OLD=")}), 1);
@@ -150,7 +149,6 @@ fn accepts_the_exact_decoded_byte_image_limit() {
 }
 
 #[test]
-#[ignore = "needs the real intern_drawing_files (src/files.rs, owned by the files port)"]
 fn exact_limit_image_is_interned_into_a_db_row() {
     let (s, c, owner) = merge_world(&[MAX_128_BYTES]);
     let d = drawing_with_files(&s, &owner, json!({}), 1);
