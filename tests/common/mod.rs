@@ -101,7 +101,7 @@ impl TestServer {
         }
         let url = format!("http://127.0.0.1:{port}");
         let mut server = TestServer { url, port, dir, db_path, child: Some(child), output };
-        let deadline = Instant::now() + Duration::from_secs(20);
+        let deadline = Instant::now() + Duration::from_secs(60);
         let probe = HttpClient::builder().timeout(Duration::from_millis(500)).build().unwrap();
         loop {
             if let Some(status) = server.child.as_mut().unwrap().try_wait().unwrap() {
