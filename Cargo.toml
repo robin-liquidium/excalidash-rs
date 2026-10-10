@@ -40,7 +40,7 @@ tower = { version = "0.5.3", default-features = false, features = ["util"] }
 url = "2.5.8"
 uuid = { version = "1.28.0", features = ["v4"] }
 webpki-roots = "1.0.9"
-zip = { version = "9.0.1", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.1", default-features = false, features = ["deflate-flate2"] }
 
 [profile.release]
 opt-level = "s"
