@@ -304,3 +304,46 @@ fn client_operations() {
     let err = rt.block_on(unreachable.check_bucket_reachable(&h, 300)).unwrap_err();
     assert_eq!(err, "timed out after 300ms");
 }
+
+/// drawingDeleteDuplicateRoutes: duplicate copies S3 objects into the new drawing's prefix;
+/// delete removes every object under the drawing prefix plus recorded keys.
+#[test]
+fn duplicate_copies_and_delete_removes_s3_objects() {
+    if !enabled() {
+        return;
+    }
+    let bucket = create_bucket();
+    let s = start(&bucket);
+    let (owner, owner_id) = user_session(&s, "owner@test.local", "USER");
+    let d = create_drawing(&s, &owner_id, "Source");
+    assert_eq!(upload(&owner, &d, "img-a", vec![7u8, 7, 7], "image/png").status, 200);
+    s.db()
+        .execute(
+            r#"UPDATE "Drawing" SET "files" = ?1 WHERE "id" = ?2"#,
+            rusqlite::params![json!({"img-a": {"id": "img-a", "mimeType": "image/png", "dataURL": format!("/api/files/{d}/img-a")}}).to_string(), d],
+        )
+        .unwrap();
+
+    let dup = owner.post(&format!("/drawings/{d}/duplicate"), json!({}));
+    assert_eq!(dup.status, 200, "{}", dup.text());
+    let new_id = dup.json()["id"].as_str().unwrap().to_string();
+    assert_eq!(dup.json()["name"], "Source (Copy)");
+    assert_eq!(dup.json()["files"]["img-a"]["dataURL"], Value::String(format!("/api/files/{new_id}/img-a")));
+    let (storage, key, mime) = s3_row(&s, &new_id, "img-a").unwrap();
+    let key = key.unwrap();
+    assert_eq!((storage.as_str(), mime.as_str()), ("s3", "image/png"));
+    assert_eq!(key, format!("excalidash/{owner_id}/{new_id}/img-a.png"));
+    let client = S3Client::new(&s3_config(&bucket)).unwrap();
+    let rt = rt();
+    assert_eq!(rt.block_on(client.download_buffer(&http(), &key)).unwrap(), vec![7u8, 7, 7]);
+
+    // Delete the source: its objects go, the copy's stay.
+    let del = owner.delete(&format!("/drawings/{d}"));
+    assert_eq!(del.status, 200, "{}", del.text());
+    let src_objects = rt.block_on(client.list_objects(&http(), &format!("excalidash/{owner_id}/{d}/"))).unwrap();
+    assert!(src_objects.is_empty(), "{src_objects:?}");
+    assert!(s3_row(&s, &d, "img-a").is_none());
+    assert_eq!(rt.block_on(client.download_buffer(&http(), &key)).unwrap(), vec![7u8, 7, 7]);
+    let got = owner.get(&format!("/files/{new_id}/img-a"));
+    assert_eq!(got.status, 302);
+}
