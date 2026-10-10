@@ -130,6 +130,8 @@ def normalize(value, t):
             if TOKEN_RE.match(v) and not v.isalpha():
                 return "<token>"
             return v
+        if isinstance(v, int) and not isinstance(v, bool) and v > 1_500_000_000_000:
+            return "<ms>"
         return v
     return walk(value)
 
@@ -142,10 +144,19 @@ def cookie_shape(v):
     return f"{name}{'(empty)' if empty else ''};" + ";".join(attrs)
 
 
-def header_map(resp):
+IGNORED_HEADERS = {"server", "content-length", "transfer-encoding"}  # server: not impersonated; others: framing only  # Rust does not impersonate nginx's Server header (documented deviation)
+
+
+def header_map(resp, base):
     m = {}
     for k, v in resp.headers:
         k = k.lower()
+        if k in IGNORED_HEADERS:
+            continue
+        if k == "access-control-allow-origin" and v == base:
+            v = "<own-origin>"
+        if k == "location":
+            v = v.replace(base, "<own-origin>")
         if k in VOLATILE_HEADERS:
             m.setdefault(k, "<present>")
             continue
@@ -208,7 +219,7 @@ class Runner:
         problems, order = [], []
         if a.status != b.status:
             problems.append(f"status {a.status} != {b.status}")
-        ha, hb = header_map(a), header_map(b)
+        ha, hb = header_map(a, self.t['node'].base), header_map(b, self.t['rust'].base)
         for k in sorted(ha.keys() | hb.keys()):
             if k not in hb:
                 problems.append(f"header missing in rust: {k}: {ha[k]}")
@@ -293,6 +304,7 @@ def scenario(R):
     s("register admin", "POST", "/api/auth/register", body=lambda v: {"email": "admin@example.test", "password": PASSWORD, "name": "Admin User", "setupCode": v["code"]},
       save=lambda v, j, r: v.__setitem__("admin_id", j["user"]["id"]))
     R.both(lambda t: t.csrf("admin"))
+    time.sleep(5.5)  # upstream caches the onboarding gate for 5s; a real client reloads
     s("me", "GET", "/api/auth/me")
     s("status authed", "GET", "/api/auth/status")
     s("logout", "POST", "/api/auth/logout", body={})
@@ -404,7 +416,18 @@ def scenario(R):
     try:
         a = zipfile.ZipFile(io.BytesIO(rs["node"].body)).namelist()
         b = zipfile.ZipFile(io.BytesIO(rs["rust"].body)).namelist()
-        print(f"        export entries node={len(a)} rust={len(b)} same-names={sorted(map(norm_entry, a)) == sorted(map(norm_entry, b))}")
+        same = sorted(map(norm_entry, a)) == sorted(map(norm_entry, b))
+        print(f"        export entries node={len(a)} rust={len(b)} same-names={same}")
+        if not same:
+            R.results[-1]["problems"].append("export entry names differ")
+        if not same:
+            print(f"        node: {sorted(map(norm_entry, a))}\n        rust: {sorted(map(norm_entry, b))}")
+        za, zb = zipfile.ZipFile(io.BytesIO(rs["node"].body)), zipfile.ZipFile(io.BytesIO(rs["rust"].body))
+        for n in a:
+            if n.endswith(".json") and "manifest" in n:
+                ma, mb = json.loads(za.read(n)), json.loads(zb.read(n))
+                d = diff_json(normalize(json.loads(norm_entry(json.dumps(ma))), R.t["node"]), normalize(json.loads(norm_entry(json.dumps(mb))), R.t["rust"]))
+                print(f"        manifest diffs: {d[:10]}")
     except Exception as e:
         print(f"        export not a zip: {e}")
 
@@ -421,6 +444,7 @@ def scenario(R):
 
 
 def norm_entry(name):
+    name = re.sub(r"__[0-9a-f]{8}(?=\.)", "__<id8>", name)
     return re.sub(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "<uuid>", name)
 
 

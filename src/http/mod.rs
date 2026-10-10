@@ -482,7 +482,17 @@ fn forwarded_proto(h: &HeaderMap) -> String {
 /// nginx `gzip on` for proxied JSON/text responses.
 async fn maybe_gzip(r: Response<AxumBody>, accepts: bool) -> Response<AxumBody> {
     let ct = r.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
-    if !static_files::gzip_type(&ct) {
+    // ngx_http_gzip_filter: only 200/403/404, gzip_types, and >= gzip_min_length (20) when known.
+    if !static_files::gzip_type(&ct) || !matches!(r.status().as_u16(), 200 | 403 | 404) {
+        return r;
+    }
+    let known_len = r
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .or_else(|| axum::body::HttpBody::size_hint(r.body()).exact());
+    if known_len.map(|n| n < 20).unwrap_or(false) {
         return r;
     }
     let (mut parts, body) = r.into_parts();

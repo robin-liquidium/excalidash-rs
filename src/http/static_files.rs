@@ -24,16 +24,9 @@ pub const NGINX_SECURITY_HEADERS: [(&str, &str); 5] = [
     ),
 ];
 
-/// nginx `add_header` (without `always`) only applies to these statuses.
-fn add_header_applies(status: StatusCode) -> bool {
-    matches!(status.as_u16(), 200 | 201 | 204 | 206 | 301 | 302 | 303 | 304 | 307 | 308)
-}
-
-/// Server-level headers nginx appends to proxied `/api` and `/socket.io` responses.
-pub fn apply_server_headers(status: StatusCode, h: &mut HeaderMap) {
-    if !add_header_applies(status) {
-        return;
-    }
+/// Server-level headers nginx appends (`add_header ... always`) to proxied
+/// `/api` and `/socket.io` responses, for every status.
+pub fn apply_server_headers(_status: StatusCode, h: &mut HeaderMap) {
     for (k, v) in NGINX_SECURITY_HEADERS {
         h.append(k, HeaderValue::from_static(v));
     }

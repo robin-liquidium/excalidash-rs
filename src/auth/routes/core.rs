@@ -963,7 +963,6 @@ async fn onboarding_choice(State(st): State<AppState>, ctx: Ctx, body: Body) -> 
             })
             .await?;
         clear_auth_enabled_cache();
-        crate::http::clear_onboarding_gate_cache();
         if enable_auth {
             crate::bootstrap::issue_if_required(&st.db, "onboarding_enabled").await?;
         }
@@ -1013,7 +1012,6 @@ async fn auth_enabled(State(st): State<AppState>, ctx: Ctx, body: Body) -> Respo
             })
             .await?;
         clear_auth_enabled_cache();
-        crate::http::clear_onboarding_gate_cache();
         if !current && next {
             crate::bootstrap::issue_if_required(&st.db, "auth_enabled_toggle").await?;
         }
