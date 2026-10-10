@@ -1,0 +1,28 @@
+# Single-container ExcaliDash: Rust backend + bundled upstream 0.6.5 frontend.
+# Drop-in for upstream's backend+frontend pair: same volumes, same env, same port.
+#   JWT_SECRET=... CSRF_SECRET=... API_KEY_HASH_PEPPER=... docker compose up -d
+services:
+  app:
+    build: .
+    image: excalidash-rs:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: file:/app/prisma/dev.db
+      NODE_ENV: production
+      AUTH_MODE: ${AUTH_MODE:-local}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:6767}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      JWT_SECRET: ${JWT_SECRET:-}            # persisted to the data volume when unset
+      CSRF_SECRET: ${CSRF_SECRET:-}          # persisted to the data volume when unset
+      API_KEY_HASH_PEPPER: ${API_KEY_HASH_PEPPER:-}
+      BACKUP_SCHEDULE: ${BACKUP_SCHEDULE:-0 0 4 * * *}
+      BACKUP_DIR: /app/backups
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - data:/app/prisma
+      - backups:/app/backups
+    ports:
+      - "127.0.0.1:6767:8080"
+volumes:
+  data: {}
+  backups: {}
