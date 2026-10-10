@@ -11,7 +11,6 @@ bcrypt = "0.19.3"
 brotli = { version = "9.0.0", default-features = false, features = ["std"] }
 bytes = "1.12.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
-cron = "0.17.0"
 flate2 = "1.1.10"
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 hex = "0.4.3"
