@@ -227,8 +227,10 @@ pub async fn export_excalidash(State(st): State<AppState>, ctx: Ctx) -> ApiResul
             })
             .await?;
         let files = spread_object(parse_json_field(&d.files, json!({})));
-        let embedded = embed_drawing_files_for_export(&files, &records, |key: String| async move {
-            crate::s3::download_buffer(&key).await.map_err(|e| e.to_string())
+        let http = st.http().clone();
+        let embedded = embed_drawing_files_for_export(&files, &records, move |key: String| {
+            let http = http.clone();
+            async move { crate::s3::download_buffer(&http, &key).await.map_err(|e| e.to_string()) }
         })
         .await
         .map_err(ApiError::internal)?;

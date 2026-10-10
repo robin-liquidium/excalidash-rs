@@ -664,7 +664,6 @@ fn exports_unmanaged_references_alongside_bundled_managed_images() {
 /// Second half: restoring into an empty account interns the bundled image.
 /// Needs the real `files::intern_drawing_files` (implemented in parallel).
 #[test]
-#[ignore = "requires files::intern_drawing_files (parallel port)"]
 fn reimport_interns_bundled_images_and_keeps_external_references() {
     let e = env();
     let bytes = b"round-trip managed image";

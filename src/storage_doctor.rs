@@ -96,7 +96,7 @@ pub fn render_storage_box(title: &str, lines: &[String]) -> String {
 pub async fn run_storage_doctor(st: &AppState) {
     let cfg = st.cfg;
     let s3_enabled = crate::s3::is_s3_enabled();
-    let probe = if s3_enabled { Some(crate::s3::check_bucket_reachable(3000).await) } else { None };
+    let probe = if s3_enabled { Some(crate::s3::check_bucket_reachable(st.http(), 3000).await) } else { None };
     let doctor = StorageDoctorConfig {
         database_url: Some(&cfg.database_url),
         file_upload_max_mb: cfg.file_upload_max_mb,

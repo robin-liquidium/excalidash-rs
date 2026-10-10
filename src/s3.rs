@@ -442,13 +442,3 @@ mod tests {
         assert_eq!(service_error_message(reqwest::StatusCode::NOT_FOUND, b""), "NotFound");
     }
 }
-
-/// downloadBuffer(key) — placeholder until the S3 module lands (export uses it).
-pub async fn download_buffer(_key: &str) -> Result<Vec<u8>, String> {
-    Err("S3 is not configured".into())
-}
-
-/// checkBucketReachable(timeoutMs) — placeholder until the S3 module lands (storage doctor uses it).
-pub async fn check_bucket_reachable(_timeout_ms: u64) -> Result<(), String> {
-    Err("S3 is not configured".into())
-}
