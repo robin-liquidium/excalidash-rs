@@ -20,6 +20,7 @@ pub mod socket;
 pub mod sqlite_maintenance;
 pub mod state;
 pub mod storage_doctor;
+pub mod trash;
 pub mod util;
 
 /// Backend version: `VERSION` file next to the binary root, else the embedded one.

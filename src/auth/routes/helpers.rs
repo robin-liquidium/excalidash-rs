@@ -241,3 +241,23 @@ pub fn account_action_rate_limit(ctx: &Ctx) -> Result<LimitDecision, axum::respo
     }
     Ok(LimitDecision { info: Some(info) })
 }
+
+// ---------------------------------------------------------------------------
+// auth/accessPolicy.ts
+
+pub fn effective_oidc_jit_provisioning(sc: &SystemConfig) -> bool {
+    let cfg = config();
+    if !cfg.oidc.enabled {
+        return false;
+    }
+    sc.oidc_jit_provisioning_enabled.unwrap_or(cfg.oidc.jit_provisioning)
+}
+
+pub fn effective_registration_enabled(registration_enabled: bool) -> bool {
+    config().auth_mode != AuthMode::OidcEnforced && registration_enabled
+}
+
+/// auth/localPassword.ts canUseLocalPasswordFlows
+pub fn can_use_local_password_flows(password_hash: Option<&str>) -> bool {
+    password_hash.map(|h| h.starts_with("$2")).unwrap_or(false)
+}
