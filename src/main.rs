@@ -109,7 +109,30 @@ fn inspect_list(items: &[String]) -> String {
     format!("[ {} ]", quoted.join(", "))
 }
 
+/// `excalidash-rs healthcheck`: exit 0 when GET /health returns 200 (for scratch images).
+fn healthcheck() -> ! {
+    use std::io::{Read, Write};
+    let port = std::env::var("PORT").ok().and_then(|p| p.parse::<u16>().ok()).unwrap_or(8000);
+    // With the frontend bundled, /health is the SPA; the API lives under /api.
+    let combined = std::env::var("FRONTEND_DIST_DIR").map(|d| !d.is_empty()).unwrap_or(false)
+        || std::path::Path::new("public/index.html").is_file();
+    let path = if combined { "/api/health" } else { "/health" };
+    let ok = (|| -> std::io::Result<bool> {
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port))?;
+        s.set_read_timeout(Some(Duration::from_secs(5)))?;
+        s.write_all(format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n").as_bytes())?;
+        let mut buf = [0u8; 16];
+        let n = s.read(&mut buf)?;
+        Ok(buf[..n].starts_with(b"HTTP/1.1 200"))
+    })()
+    .unwrap_or(false);
+    std::process::exit(if ok { 0 } else { 1 });
+}
+
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("healthcheck") {
+        healthcheck();
+    }
     let blocking: usize = std::env::var("EXCALIDASH_BLOCKING_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()

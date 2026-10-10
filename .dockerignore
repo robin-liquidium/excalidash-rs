@@ -1,0 +1,11 @@
+target
+upstream-ref
+frontend-dist
+.tmp
+.git
+tests
+docs
+*.db
+*.db-wal
+*.db-shm
+.claude
