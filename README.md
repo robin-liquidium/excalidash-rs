@@ -58,7 +58,7 @@ Conventions for contributors: `docs/PORTING.md`. Tracking upstream releases: `UP
 
 ## Verification
 
-All results below are from the commit that produced the image measured above.
+All gates were re-run against the final image `excalidash-rs:0128d03` (built from this repo at commit `0128d03`).
 
 | Gate | Result |
 |---|---|
