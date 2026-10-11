@@ -190,7 +190,8 @@ async fn async_main() {
         }
     };
     println!("Configuration validated successfully");
-    run_migrations(cfg);
+    // Blocking (the sync PostgreSQL client cannot run on the async thread).
+    tokio::task::spawn_blocking(move || run_migrations(cfg)).await.expect("migrations");
 
     println!("Resolved DATABASE_URL: {}", config::redact_database_url(&cfg.database_url));
     if let Some(bucket) = &cfg.s3.bucket {
@@ -231,8 +232,10 @@ async fn async_main() {
     // configureSqlite + security settings, then background jobs.
     excalidash_rs::security::configure_max_data_url_size(cfg.file_upload_max_bytes as u64);
     {
-        let c = st.db.get().expect("db connection");
-        db::configure_sqlite(&c);
+        if !st.db.is_postgres() {
+            let c = st.db.get().expect("db connection");
+            db::configure_sqlite(&c);
+        }
     }
     excalidash_rs::sqlite_maintenance::enable_incremental_auto_vacuum(&st).await;
     excalidash_rs::backups::start_scheduled_backups(&st);

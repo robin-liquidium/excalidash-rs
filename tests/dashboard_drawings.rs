@@ -334,8 +334,14 @@ fn list_drawings_filters_sorts_paginates_and_caches() {
     // Specific collection.
     assert_eq!(ids(&c.get(&format!("/drawings?collectionId={col}")).json()), vec![d2.clone()]);
     assert_eq!(c.get("/drawings?collectionId=missing").json(), json!({"error": "Collection not found"}));
-    // Search is a case-insensitive LIKE (Prisma `contains` on SQLite does not escape wildcards).
-    assert_eq!(ids(&c.get("/drawings?search=ALP").json()), vec![d1.clone()]);
+    // Search is LIKE without wildcard escaping (Prisma `contains`): case-insensitive on
+    // SQLite, case-sensitive on PostgreSQL.
+    if is_pg() {
+        assert!(ids(&c.get("/drawings?search=ALP").json()).is_empty());
+        assert_eq!(ids(&c.get("/drawings?search=Alp").json()), vec![d1.clone()]);
+    } else {
+        assert_eq!(ids(&c.get("/drawings?search=ALP").json()), vec![d1.clone()]);
+    }
     assert_eq!(ids(&c.get("/drawings?search=%25").json()).len(), 2);
     assert_eq!(ids(&c.get("/drawings?search=b_ta").json()), vec![d2.clone()]);
     // Sorting by name defaults to asc (binary collation: uppercase first).

@@ -48,7 +48,7 @@ fn shared_list_shape_and_collection_exclusion() {
     assert_eq!(first["collectionId"], Value::Null);
 
     // includeData: full model; upstream does not select permissions there → "view".
-    let full = rec.get("/drawings/shared?includeData=1&search=loo").json();
+    let full = rec.get(if is_pg() { "/drawings/shared?includeData=1&search=Loo" } else { "/drawings/shared?includeData=1&search=loo" }).json();
     assert_eq!(ids(&full), vec![loose.clone()]);
     let d = &full["drawings"][0];
     assert_eq!(d["elements"], json!([{"id": "a"}]));

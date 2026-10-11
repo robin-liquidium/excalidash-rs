@@ -19,6 +19,9 @@ fn wait_until(timeout: Duration, mut f: impl FnMut() -> bool) -> bool {
 
 #[test]
 fn writes_scheduled_private_independent_backups() {
+    if sqlite_only() {
+        return;
+    }
     let backups = tempfile::tempdir().unwrap();
     let dir = backups.path().join("scheduled");
     let server = TestServer::start(&[("BACKUP_SCHEDULE", "* * * * * *"), ("BACKUP_DIR", dir.to_str().unwrap())]);
@@ -86,6 +89,9 @@ fn invalid_backup_schedule_disables_backups_without_failing_startup() {
 
 #[test]
 fn fresh_database_uses_incremental_auto_vacuum_like_upstream() {
+    if sqlite_only() {
+        return;
+    }
     let server = TestServer::start(&[]);
     let mode: i64 = server.db().query_row("PRAGMA auto_vacuum", [], |r| r.get(0)).unwrap();
     assert_eq!(mode, 2);
@@ -97,9 +103,15 @@ fn fresh_database_uses_incremental_auto_vacuum_like_upstream() {
 #[test]
 fn prints_storage_summary_box_at_startup() {
     let server = TestServer::start(&[("FILE_UPLOAD_MAX_MB", "10"), ("BODY_LIMIT_MB", "50")]);
-    let target = server.db_path.display().to_string();
+    let database = match server.db_url.strip_prefix("file:") {
+        Some(path) => format!("sqlite ({path})"),
+        None => {
+            let u = url::Url::parse(&server.db_url).unwrap();
+            format!("postgresql ({}:{}{})", u.host_str().unwrap(), u.port().unwrap(), u.path())
+        }
+    };
     let lines = [
-        format!("Database:      sqlite ({target})"),
+        format!("Database:      {database}"),
         "File storage:  database (default)".to_string(),
         "  Image blobs are stored in the database (DrawingFile.data).".to_string(),
         "Limits:        FILE_UPLOAD_MAX_MB=10 (per image), BODY_LIMIT_MB=50 (scene JSON)".to_string(),

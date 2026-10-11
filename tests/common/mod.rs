@@ -30,6 +30,20 @@ pub struct TestServer {
     output: Arc<Mutex<String>>,
 }
 
+/// True when the suite runs against PostgreSQL (`EXCALIDASH_TEST_PG`).
+pub fn is_pg() -> bool {
+    std::env::var("EXCALIDASH_TEST_PG").is_ok()
+}
+
+/// Skip a test that covers a SQLite-only feature (file backups, PRAGMAs) in PostgreSQL mode.
+pub fn sqlite_only() -> bool {
+    if is_pg() {
+        eprintln!("skipped: SQLite-only feature");
+        return true;
+    }
+    false
+}
+
 fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }

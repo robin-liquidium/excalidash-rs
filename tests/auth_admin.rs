@@ -82,8 +82,9 @@ fn admin_user_management() {
     let r = admin.get("/auth/users");
     assert_eq!(r.status, 200);
     let users = r.json()["users"].clone();
-    // The add_user_auth migration seeds the inactive bootstrap admin.
-    assert_eq!(users.as_array().unwrap().len(), 2);
+    // The SQLite add_user_auth migration seeds the inactive bootstrap admin (the
+    // PostgreSQL baseline migration does not).
+    assert_eq!(users.as_array().unwrap().len(), if is_pg() { 1 } else { 2 });
     assert_eq!(
         keys(&users[0]),
         ["id", "username", "email", "name", "role", "mustResetPassword", "isActive", "createdAt", "updatedAt"]
@@ -144,8 +145,13 @@ fn admin_user_management() {
 
     let listed = admin.get("/auth/users").json()["users"].clone();
     let emails: Vec<&str> = listed.as_array().unwrap().iter().map(|u| u["email"].as_str().unwrap()).collect();
-    // createdAt asc in SQL: the migration's TEXT timestamp sorts after Prisma's integer ones.
-    assert_eq!(emails, ["admin@test.local", "u1@test.local", "u2@test.local", "bootstrap@excalidash.local"]);
+    // createdAt asc in SQL: the migration's TEXT timestamp sorts after Prisma's integer ones
+    // (no seeded bootstrap row on PostgreSQL).
+    let mut expected = vec!["admin@test.local", "u1@test.local", "u2@test.local"];
+    if !is_pg() {
+        expected.push("bootstrap@excalidash.local");
+    }
+    assert_eq!(emails, expected);
 
     // PATCH
     let before = db_user(&server, &u1_id).3;
@@ -226,6 +232,9 @@ fn admin_role_endpoint_and_bootstrap_protection() {
 
     // auth-enabled.integration.ts: protects the bootstrap admin role through both endpoints
     // (the migration-seeded row: role ADMIN, inactive).
+    if is_pg() {
+        server.db().execute(r#"INSERT INTO "User" ("id","email","passwordHash","name","role","mustResetPassword","isActive","createdAt","updatedAt") VALUES ('bootstrap-admin','bootstrap@excalidash.local','','Bootstrap Admin','ADMIN',1,0,0,0)"#, []).unwrap();
+    }
     server.db().execute(r#"UPDATE "User" SET "role" = 'ADMIN', "isActive" = 0 WHERE "id" = 'bootstrap-admin'"#, []).unwrap();
     let r = admin.post("/auth/admins", json!({"identifier": "bootstrap@excalidash.local", "role": "USER"}));
     assert_eq!(r.status, 409);

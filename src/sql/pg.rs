@@ -26,6 +26,19 @@ const BOOL_COLUMNS: &[&str] = &[
     "used",
 ];
 
+/// Columns declared TIMESTAMP(3) (`expiresAt` is BIGINT on "ChatGptConnection").
+const TIMESTAMP_COLUMNS: &[&str] = &[
+    "bootstrapSetupCodeExpiresAt",
+    "bootstrapSetupCodeIssuedAt",
+    "createdAt",
+    "expiresAt",
+    "lastLoginAt",
+    "lastUsedAt",
+    "lockedUntil",
+    "revokedAt",
+    "updatedAt",
+];
+
 pub fn is_postgres_url(url: &str) -> bool {
     url.starts_with("postgresql://") || url.starts_with("postgres://")
 }
@@ -525,30 +538,36 @@ fn is_bool_col(name: &str) -> bool {
     BOOL_COLUMNS.contains(&name)
 }
 
-fn bool_lit(n: &str) -> Option<&'static str> {
-    match n {
-        "0" => Some("FALSE"),
-        "1" => Some("TRUE"),
-        _ => None,
+/// Literal integer written to / compared with a typed column: 0/1 for BOOLEAN,
+/// unix ms for TIMESTAMP(3) (SQLite stores both as plain integers).
+fn typed_lit(col: &str, n: &str, int_expires: bool) -> Option<String> {
+    if is_bool_col(col) {
+        return match n {
+            "0" => Some("FALSE".into()),
+            "1" => Some("TRUE".into()),
+            _ => None,
+        };
     }
+    if TIMESTAMP_COLUMNS.contains(&col) && !(int_expires && col == "expiresAt") && n.bytes().all(|b| b.is_ascii_digit()) {
+        return Some(format!("(TIMESTAMP 'epoch' + {n} * INTERVAL '1 millisecond')"));
+    }
+    None
 }
 
 pub fn translate(sql: &str) -> String {
     let toks = tokenize(sql);
-    let mut repl: HashMap<usize, &'static str> = HashMap::new();
+    let mut repl: HashMap<usize, String> = HashMap::new();
+    let int_expires = toks.iter().any(|t| *t == Tok::Ident("ChatGptConnection"));
     let next_sig = |from: usize| (from..toks.len()).find(|&j| !matches!(toks[j], Tok::Space(_)));
 
     // `"boolCol" (=|!=|<>) 0|1`  and  `0|1 = "boolCol"`
     for (i, t) in toks.iter().enumerate() {
         if let Tok::Ident(name) = t {
-            if !is_bool_col(name) {
-                continue;
-            }
             if let Some(op) = next_sig(i + 1) {
-                if matches!(toks[op], Tok::Punct("=" | "!=" | "<>")) {
+                if matches!(toks[op], Tok::Punct("=" | "!=" | "<>" | "<" | ">" | "<=" | ">=")) {
                     if let Some(v) = next_sig(op + 1) {
                         if let Tok::Num(n) = toks[v] {
-                            if let Some(l) = bool_lit(n) {
+                            if let Some(l) = typed_lit(name, n, int_expires) {
                                 repl.insert(v, l);
                             }
                         }
@@ -576,10 +595,8 @@ pub fn translate(sql: &str) -> String {
                             let sig: Vec<usize> = (*a..*b).filter(|&k| !matches!(toks[k], Tok::Space(_))).collect();
                             if let ([k], Some(col)) = (sig.as_slice(), cols.get(pos)) {
                                 if let Tok::Num(n) = toks[*k] {
-                                    if is_bool_col(col) {
-                                        if let Some(l) = bool_lit(n) {
-                                            repl.insert(*k, l);
-                                        }
+                                    if let Some(l) = typed_lit(col, n, int_expires) {
+                                        repl.insert(*k, l);
                                     }
                                 }
                             }
@@ -607,7 +624,7 @@ pub fn translate(sql: &str) -> String {
                     if let Some(g) = next_sig(o + 1) {
                         if matches!(toks[g], Tok::Word(w) if w.eq_ignore_ascii_case("IGNORE")) {
                             for k in i + 1..=g {
-                                repl.insert(k, "");
+                                repl.insert(k, String::new());
                             }
                             or_ignore = true;
                         }
