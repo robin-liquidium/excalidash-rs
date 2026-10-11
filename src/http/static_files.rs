@@ -177,9 +177,12 @@ fn simple(status: StatusCode) -> Response<Body> {
 
 fn serve_blocking(root: &Path, method: &Method, headers: &HeaderMap, uri_path: &str) -> Response<Body> {
     if method != Method::GET && method != Method::HEAD {
-        // nginx static handler: 405 for other methods on files.
+        // nginx static handler: 405 for other methods on files. Only `location /`
+        // inherits the server-level add_header set; the asset location defines its own.
         let mut r = simple(StatusCode::METHOD_NOT_ALLOWED);
-        apply_server_headers(StatusCode::OK, r.headers_mut()); // location / inherits server headers
+        if !matches!(location_for(uri_path), Location::Asset) {
+            apply_server_headers(StatusCode::OK, r.headers_mut());
+        }
         return r;
     }
     let request_location = location_for(uri_path);
@@ -201,8 +204,12 @@ fn serve_blocking(root: &Path, method: &Method, headers: &HeaderMap, uri_path: &
                     let mut r = if !uri_path.ends_with('/') {
                         // Directory without trailing slash: 301 to the slash form.
                         let mut r = simple(StatusCode::MOVED_PERMANENTLY);
+                        // absolute_redirect + port_in_redirect: Host name with the listen port.
                         let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("localhost");
-                        if let Ok(v) = HeaderValue::from_str(&format!("http://{host}{uri_path}/")) {
+                        let name = host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host);
+                        let port = crate::config::config().port;
+                        let authority = if port == 80 { name.to_string() } else { format!("{name}:{port}") };
+                        if let Ok(v) = HeaderValue::from_str(&format!("http://{authority}{uri_path}/")) {
                             r.headers_mut().insert(header::LOCATION, v);
                         }
                         r
