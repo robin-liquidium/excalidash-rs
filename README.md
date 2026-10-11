@@ -19,7 +19,7 @@ editing one drawing at ~20 events/s each plus a 200-element save every 2 s, 60 s
 | RSS 30 s after load | **10.0 MiB** | 163.0 MiB |
 | cgroup memory (docker stats), idle | **2.4 MiB** | 81.6 MiB |
 | Image content size (`docker image inspect`) | **21.1 MB** | 166.8 MB (127.4 + 39.4) |
-| `docker images` SIZE (containerd store: compressed + unpacked) | **41.1 MB** | 657 MB (535 + 122) |
+| `docker images` SIZE (containerd store: compressed blobs + unpacked snapshot; varies 41–49 MB between builds) | **≈ 41–49 MB** | 657 MB (535 + 122) |
 | Binary | 5.3 MB static musl, `scratch` base | Node 20 + node_modules + Prisma engines |
 
 Of the 21.1 MB image, 13.1 MB is upstream's own font files and 2.9 MB its (gzipped) JS/CSS;
