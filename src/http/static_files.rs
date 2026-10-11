@@ -320,8 +320,9 @@ fn serve_blocking(root: &Path, method: &Method, headers: &HeaderMap, uri_path: &
     };
     if not_modified {
         let mut r = builder.status(StatusCode::NOT_MODIFIED).body(Body::empty()).unwrap();
-        r.headers_mut().remove(header::CONTENT_TYPE);
-        r.headers_mut().remove(header::CONTENT_ENCODING);
+        for h in [header::CONTENT_TYPE, header::CONTENT_ENCODING, header::ACCEPT_RANGES, header::VARY, header::CONTENT_LENGTH] {
+            r.headers_mut().remove(h);
+        }
         return r;
     }
 
