@@ -233,17 +233,22 @@ fn github_api_base() -> String {
 /// fetchLatest(channel)
 async fn fetch_latest(st: &AppState, channel: Channel) -> Result<Map<String, Value>, String> {
     let now = crate::util::now_ms();
-    let mut cache = CACHE.lock().await;
-    if let Some(c) = cache.as_ref() {
-        if c.channel == channel && now - c.fetched_at < UPDATE_CHECK_TTL_MS {
-            return Ok(c.response.clone());
+    // Like upstream's module-level `cache`: read it, do the fetch without holding it
+    // (concurrent misses each fetch), then write the result.
+    let prior_etag = {
+        let mut cache = CACHE.lock().await;
+        if let Some(c) = cache.as_ref() {
+            if c.channel == channel && now - c.fetched_at < UPDATE_CHECK_TTL_MS {
+                return Ok(c.response.clone());
+            }
         }
-    }
-    if !st.cfg.update_check.outbound {
-        let response = base_response(channel, false);
-        *cache = Some(Cache { channel, fetched_at: now, etag: None, response: response.clone() });
-        return Ok(response);
-    }
+        if !st.cfg.update_check.outbound {
+            let response = base_response(channel, false);
+            *cache = Some(Cache { channel, fetched_at: now, etag: None, response: response.clone() });
+            return Ok(response);
+        }
+        cache.as_ref().filter(|c| c.channel == channel).and_then(|c| c.etag.clone())
+    };
     let url = format!(
         "{}/repos/ZimengXiong/ExcaliDash/releases{}",
         github_api_base(),
@@ -258,15 +263,12 @@ async fn fetch_latest(st: &AppState, channel: Channel) -> Result<Map<String, Val
     if let Some(token) = &st.cfg.update_check.github_token {
         req = req.header("Authorization", format!("Bearer {token}"));
     }
-    if let Some(c) = cache.as_ref() {
-        if c.channel == channel {
-            if let Some(etag) = &c.etag {
-                req = req.header("If-None-Match", etag);
-            }
-        }
+    if let Some(etag) = &prior_etag {
+        req = req.header("If-None-Match", etag);
     }
     let resp = req.send().await.map_err(|e| format!("fetch failed: {e}"))?;
     let status = resp.status().as_u16();
+    let mut cache = CACHE.lock().await;
     if status == 304 {
         if let Some(c) = cache.as_mut() {
             if c.channel == channel {
@@ -282,6 +284,7 @@ async fn fetch_latest(st: &AppState, channel: Channel) -> Result<Map<String, Val
         return Ok(response);
     }
     let etag = resp.headers().get("etag").and_then(|v| v.to_str().ok()).map(str::to_string);
+    drop(cache);
     let body = resp.bytes().await.map_err(|e| e.to_string())?;
     let json: Value = serde_json::from_slice(&body).map_err(|e| format!("SyntaxError: {e}"))?;
     let releases: Vec<Value> = match json {
@@ -301,7 +304,7 @@ async fn fetch_latest(st: &AppState, channel: Channel) -> Result<Map<String, Val
             response.insert("publishedAt".into(), Value::String(p.into()));
         }
     }
-    *cache = Some(Cache { channel, fetched_at: now, etag, response: response.clone() });
+    *CACHE.lock().await = Some(Cache { channel, fetched_at: now, etag, response: response.clone() });
     Ok(response)
 }
 

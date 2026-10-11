@@ -84,12 +84,12 @@ Status legend: ✅ ported + tested · ⚠️ ported with a documented deviation 
 | Request id, helmet headers, CORS (incl. preflight), body parsers + limits, request log, general rate limit, ETag/304, finalhandler 404 | index.ts, helmet, cors, express | src/http/mod.rs, src/http/body.rs, src/http/rate_limit.rs | ✅ | core_http::*, tests/diff |
 | Express routing semantics: case-insensitive literal segments, trailing slash, automatic `OPTIONS` reply (`Allow`, sorted) | express / router 2 | src/http/mod.rs, src/http/express_routes.rs (generated from upstream) | ✅ | core_http::express_options_reply_and_case_insensitive_paths, http::express_routing_tests, tests/diff |
 | CSRF tokens (HMAC, cookie client id + legacy id), CSRF middleware | security.ts, server/csrf.ts, security/csrfClient.ts | src/http/csrf.rs | ✅ | core_http::csrf_required_for_mutations |
-| HTTPS redirect policy | server/httpsRedirectPolicy.ts | src/http/mod.rs | ⚠️ | auth_core_upstream::production_health_* |
+| HTTPS redirect policy | server/httpsRedirectPolicy.ts | src/http/mod.rs | ✅ | auth_core_upstream::production_health_* |
 | Onboarding gate | index.ts | src/http/mod.rs | ✅ | core_http::onboarding_gate_blocks_app_routes_until_setup |
 | requireAuth / optionalAuth (JWT cookie/bearer, API keys + scopes, must-reset, OIDC role reconcile, bootstrap acting user) | middleware/auth.ts, auth/authMode.ts | src/auth/middleware.rs | ✅ | harness_selftest, auth suites |
 | JWT format (HS256, claims, ms-style expiries), auth cookies | auth.ts, auth/cookies.ts | src/auth/jwt.rs, src/auth/cookies.rs | ✅ | auth_core (Set-Cookie formats), tests/realdata (live-secret tokens) |
 | API key hashing (scrypt N=2^14 r=8 p=1, pepper) | auth/apiKeys.ts | src/auth/api_keys.rs | ✅ | auth_account::api_key_authentication (Node-created key) |
-| XSS sanitisation (DOMPurify → ammonia), zod element/appState schemas, file dataURL rules | security.ts | src/security.rs | ⚠️ | security::tests, dashboard_drawings::sanitizer_* |
+| XSS sanitisation (DOMPurify → ammonia), zod element/appState schemas, file dataURL rules | security.ts | src/security.rs | ✅ | security::tests, dashboard_drawings::sanitizer_*, sanitize_corpus (byte-identical to DOMPurify) |
 | Snapshot codec (brotli `br1:`) | snapshots/snapshotCodec.ts | src/snapshots.rs | ✅ | snapshots::tests (unit) |
 | Drawing access (owner/ACL/collection/link policy) | authz/sharing.ts | src/authz.rs | ✅ | dashboard_collections, dashboard_link_sharing |
 | Socket.IO collab (join-room, cursor-move, element-update, user-activity, presence, revalidation; per-socket in-order event handling like Node's event loop; engine.io CORS/preflight) | server/socket.ts, server/socketAccess.ts, index.ts (io cors) | src/socket.rs, src/http/mod.rs (outer_layer) | ✅ | dashboard_scene (broadcast), e2e collaboration.spec / image-collab.spec (25/25 with --repeat-each=5, no retries), tests/diff socket.io steps |
@@ -97,13 +97,15 @@ Status legend: ✅ ported + tested · ⚠️ ported with a documented deviation 
 | Audit log | utils/audit.ts | src/audit.rs | ✅ | tests/diff (ENABLE_AUDIT_LOGGING=true) |
 | Prisma migrations (`migrate deploy` bookkeeping, checksums) | prisma + docker-entrypoint.sh | src/db.rs, src/main.rs | ✅ | schema identical to Prisma's (see Verification) |
 | Persisted JWT/CSRF secrets, migration lock, RUN_MIGRATIONS | docker-entrypoint.sh | src/main.rs (`EXCALIDASH_ENTRYPOINT=1`) | ✅ | |
-| Static frontend serving (SPA fallback, per-location headers, caching, gzip + Vary, ETag/Last-Modified/304, asset 404, directory 301/403, 405, `Server`) | frontend/nginx.conf.template | src/http/static_files.rs | ⚠️ | tests/diff (11 static steps: SPA index/deep link/index.html, favicon, asset gzip/identity/304, missing asset, directory redirect/forbidden, POST) |
+| Static frontend serving (SPA fallback, per-location headers, caching, gzip + Vary, ETag/Last-Modified/304, asset 404, directory 301/403, 405, `Server`) | frontend/nginx.conf.template | src/http/static_files.rs | ✅ | tests/diff (11 static steps: SPA index/deep link/index.html, favicon, asset gzip/identity/304, missing asset, directory redirect/forbidden, POST) |
 | Bootstrap setup code | auth/bootstrapSetupCode.ts | src/bootstrap.rs | ✅ | auth_core, auth_core_upstream::auth_onboarding_decision_flow |
 | Login rate limiter (SystemConfig-driven), account-action limiter | auth.ts | src/auth/routes/helpers.rs | ✅ | auth_core_upstream::login_rate_limit_*, auth_admin |
-| OIDC (openid-client v5 semantics: discovery, PKCE, ID token checks, JWKS, JIT, groups→role) | auth/oidc*.ts | src/auth/routes/oidc.rs, src/auth/oidc_client.rs | ⚠️ | auth_oidc, auth_oidc_secret_file |
+| OIDC (openid-client v5 semantics: discovery, PKCE, ID token checks, JWKS, JIT, groups→role) | auth/oidc*.ts | src/auth/routes/oidc.rs, src/auth/oidc_client.rs | ✅ | auth_oidc, auth_oidc_secret_file |
 | Password-reset mail (SMTP via lettre, Resend via HTTPS) | mail/*, config/mail.ts | src/mail.rs | ✅ | auth_account_mail; image-level: SMTP mail received, link confirmed, login with new password |
-| Image interning, DrawingFile store (db + S3), S3 client | fileProcessing.ts, drawingFileStore.ts, s3.ts | src/files.rs, src/s3.rs | ⚠️ | files_store, files_s3, files::tests |
+| Image interning, DrawingFile store (db + S3), S3 client | fileProcessing.ts, drawingFileStore.ts, s3.ts | src/files.rs, src/s3.rs, src/aws_credentials.rs | ✅ | files_store, files_s3 (incl. AWS credential chain), files::tests |
 | Scene update (versioned tx, snapshots, file merge, element-update broadcast) | routes/dashboard/sceneUpdate.ts | src/routes/dashboard/scene.rs | ✅ | dashboard_scene |
+| zod validation issues (dev-mode `details`), refine/abort semantics | index.ts schemas, security.ts | src/zodlike.rs, src/routes/dashboard/schema.rs | ✅ | zod_issues (37 upstream-captured cases) |
+| JS `new Date(string)` parsing for link-share expiry | drawingSharingRoutes.ts | src/jsdate.rs | ✅ | jsdate::tests (41 Node-captured cases) |
 | Scheduled SQLite backups (cron 5/6 fields, retention) | backups/scheduler.ts | src/backups.rs | ✅ | ops_backups_maintenance, backups::tests; image-level: backups written on schedule, 0600/uid 1001, integrity_check ok |
 | SQLite incremental auto-vacuum + reclaim | db/sqliteMaintenance.ts | src/sqlite_maintenance.rs | ✅ | ops_backups_maintenance, sqlite_maintenance::tests |
 | Storage doctor startup box | server/storageDoctor.ts | src/storage_doctor.rs | ✅ | storage_doctor::tests |
@@ -120,56 +122,45 @@ Not portable through HTTP and covered by unit tests instead: S3 upload races tha
 mocks inside the AWS SDK (`files::tests`), `account-backup-images` (S3 download stub in
 `export_files.rs` tests), import cleanup races (`import_export` unit tests).
 
-## Deliberate deviations
+## Remaining differences
 
-Everything below was checked against upstream; none is visible to the shipped frontend
-(the differential test and the full upstream e2e suite pass).
+Everything else — status codes, headers (incl. `Server`, framing, CORS, cache headers), JSON
+bodies and key order, cookies, routing quirks, static-file semantics, sanitiser output,
+validation issues in dev mode, date parsing — is verified identical against upstream
+(see Verification in README.md). What remains:
 
-**Scope**
-- **PostgreSQL is not implemented.** The build is SQLite-only (the setup this targets);
-  `DATABASE_PROVIDER=postgresql` or a non-`file:` `DATABASE_URL` stops startup with a clear error.
-  Upstream's Postgres migrations are not vendored. Adding it later means a second query
-  backend behind a cargo feature; nothing in the SQLite path would change.
+**Out of scope**
+- **PostgreSQL** (optional in the brief): the build is SQLite-only; `DATABASE_PROVIDER=postgresql`
+  or a non-`file:` `DATABASE_URL` stops startup with a clear error.
 
-**HTTP surface**
-- Header names are sent lowercase. Header names are case-insensitive (RFC 9110), and the live
-  path goes through Cloudflare, which speaks HTTP/2/3 to browsers where names are always
-  lowercase, so clients cannot observe a difference. (Bundled mode does send nginx's
-  `Server: nginx/1.31.6`, and the export is streamed chunked like upstream.)
-- 204 responses carry no `Content-Length: 0` (Express/cors add it; RFC 9110 forbids it and
+**Not observable by clients (protocol level)**
+- Header-name letter case: hyper writes lowercase names and keeps its case-preservation API
+  crate-private. Names are case-insensitive (RFC 9110 §5.1), and on the live path Cloudflare
+  serves browsers over HTTP/2/3, where names are lowercase by definition (RFC 9113 §8.2.1),
+  so browsers receive identical bytes either way.
+- 204 responses carry no `Content-Length: 0` (Express/cors add it; RFC 9110 §8.6 forbids it,
   hyper strips it).
-- HTTPS redirect URLs keep the `/api` prefix; upstream's backend sees the stripped path and
-  redirects to `/<path>` without it (an upstream bug behind nginx).
 
-**Static frontend (nginx emulation)**
-- JS/CSS are stored pre-gzipped in the image (`*.gz` only) and sent compressed to gzip clients
-  or inflated on the fly for others; nginx compresses on the fly. Same `Content-Encoding`,
-  `Vary`, weak ETag.
-- Range requests support a single range (nginx also serves multipart ranges; browsers never
-  request those for these assets).
-
-**Behavioural details**
-- Sanitisation uses ammonia (html5ever) instead of DOMPurify (jsdom) with the same allow/forbid
-  lists and post-processing; serialised HTML/SVG can differ in insignificant ways.
-- Non-production zod validation `details` arrays are approximations (production bodies,
-  which this deployment uses, match exactly).
-- Link-share `expiresAt` accepts ISO-8601 variants rather than everything JS `Date` parses.
-- OIDC: encrypted ID tokens / JARM are rejected (upstream never configures them). ES512 and
-  ES256K are verified with RustCrypto (`p521`, `k256`) since `jsonwebtoken` lacks them.
-- S3: only explicit `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` are used (no AWS profile /
-  instance-role chain); server-side S3 calls use short-lived presigned URLs; S3 error texts
-  come from the service XML rather than the AWS SDK.
-- Release check: concurrent `/system/update` requests share one GitHub fetch.
-- Resend: like upstream, the idempotency key is not sent.
-- A legacy-import BLOB scene column is treated as `{}`.
+**Implementation choices with identical responses**
+- JS/CSS ship pre-gzipped in the image and are inflated on the fly for clients without gzip;
+  nginx compresses on the fly. Same bytes, `Content-Encoding`, `Vary`, weak ETag, chunking
+  (verified in tests/diff).
+- Server-to-S3 calls use short-lived SigV4-presigned URLs; S3 error texts come from the
+  service's XML `<Message>`/`<Code>` (what the AWS SDK surfaces as `error.message`).
+- Sanitiser: ammonia (html5ever) configured to DOMPurify's semantics — output verified
+  byte-identical on tests/fixtures/sanitize_corpus (127 texts × 2 lengths, 14 SVGs) and on the
+  real previews of the live data.
+- A legacy-import BLOB scene column is read as `{}`.
 
 **Rust-only environment variables**
 - `FRONTEND_DIST_DIR` (default `/app/public` when present; `none` = backend-only mode),
   `EXCALIDASH_ENTRYPOINT=1` (docker-entrypoint duties: persisted secrets, migration lock),
   `EXCALIDASH_BACKEND_ROOT` (upstream's `backendRoot`), `EXCALIDASH_BLOCKING_THREADS`
-  (default 8), `EXCALIDASH_GITHUB_API_URL` (tests only).
-- Upstream's docker-entrypoint variables `RUN_MIGRATIONS`, `MIGRATION_LOCK_TIMEOUT_SECONDS`,
-  `DATABASE_PROVIDER` are honoured by the binary itself.
+  (default 8), `EXCALIDASH_GITHUB_API_URL` (tests only). Upstream's entrypoint variables
+  `RUN_MIGRATIONS`, `MIGRATION_LOCK_TIMEOUT_SECONDS`, `DATABASE_PROVIDER` are honoured.
+- AWS default credential chain variables (`AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`,
+  `AWS_CONFIG_FILE`, `AWS_SESSION_TOKEN`, `AWS_WEB_IDENTITY_TOKEN_FILE`/`AWS_ROLE_ARN`,
+  `AWS_CONTAINER_CREDENTIALS_*`, `AWS_EC2_METADATA_*`) are read like the AWS SDK does.
 
 ## Heavy crates (justification)
 

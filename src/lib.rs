@@ -10,6 +10,7 @@ pub mod db;
 pub mod drawings_cache;
 pub mod files;
 pub mod http;
+pub mod jsdate;
 pub mod mail;
 pub mod models;
 pub mod net;
@@ -23,6 +24,7 @@ pub mod state;
 pub mod storage_doctor;
 pub mod trash;
 pub mod util;
+pub mod zodlike;
 
 /// Backend version: `VERSION` file next to the binary root, else the embedded one.
 pub fn backend_version() -> String {

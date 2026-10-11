@@ -65,6 +65,8 @@ fn string_len_issue(path: &str, min: bool, n: usize) -> Value {
 struct Parsed {
     input: DrawingInput,
     issues: Vec<Value>,
+    /// Any zod-aborting issue (type/enum/union) — outer refinements are skipped then.
+    aborted: bool,
 }
 
 /// drawingBaseSchema + the scene fields shared by create/update.
@@ -77,7 +79,14 @@ fn parse_base(body: Option<&Value>, create: bool) -> Parsed {
         if body.is_none() {
             issue["message"] = json!("Invalid input: expected object, received undefined");
         }
-        return Parsed { input, issues: vec![issue] };
+        return Parsed { input, issues: vec![issue], aborted: true };
+    };
+    let mut aborted = false;
+    let mut push = |issues: &mut Vec<Value>, list: Vec<crate::zodlike::Issue>| {
+        for i in list {
+            aborted |= i.aborted;
+            issues.push(i.value);
+        }
     };
 
     if let Some(v) = obj.get("name") {
@@ -92,21 +101,30 @@ fn parse_base(body: Option<&Value>, create: bool) -> Parsed {
                     input.name = Some(t.to_string());
                 }
             }
-            other => issues.push(invalid_type(&[json!("name")], "string", other)),
+            other => push(&mut issues, vec![crate::zodlike::invalid_type(vec![json!("name")], "string", Some(other))]),
         }
     }
     if let Some(v) = obj.get("collectionId") {
         match v {
             Value::Null => input.collection_id = Some(None),
             Value::String(s) if js_len(js_trim(s)) >= 1 => input.collection_id = Some(Some(js_trim(s).to_string())),
-            _ => issues.push(json!({"code": "invalid_union", "path": ["collectionId"], "message": "Invalid input"})),
+            other => {
+                // z.union([z.string().trim().min(1), z.null()])
+                use crate::zodlike::{invalid_type as it, too_small, union};
+                let string_branch = match other {
+                    Value::String(_) => vec![too_small(vec![], "string", 1.0)],
+                    o => vec![it(vec![], "string", Some(o))],
+                };
+                let null_branch = vec![it(vec![], "null", Some(other))];
+                push(&mut issues, union(vec![json!("collectionId")], vec![string_branch, null_branch]));
+            }
         }
     }
     if let Some(v) = obj.get("preview") {
         match v {
             Value::Null => input.preview = Some(None),
             Value::String(s) => input.preview = Some(Some(s.clone())),
-            other => issues.push(invalid_type(&[json!("preview")], "string", other)),
+            other => push(&mut issues, vec![crate::zodlike::invalid_type(vec![json!("preview")], "string", Some(other))]),
         }
     }
     match obj.get("elements") {
@@ -117,26 +135,28 @@ fn parse_base(body: Option<&Value>, create: bool) -> Parsed {
             for (i, el) in a.iter().enumerate() {
                 match sanitize_element(el) {
                     Some(v) => out.push(v),
-                    None => issues.push(json!({"code": "invalid_type", "path": ["elements", i], "message": "Invalid input"})),
+                    None => push(&mut issues, crate::zodlike::element_issues(&vec![json!("elements"), json!(i)], el)),
                 }
             }
             input.elements = Some(out);
         }
-        Some(other) => issues.push(invalid_type(&[json!("elements")], "array", other)),
+        Some(other) => push(&mut issues, vec![crate::zodlike::invalid_type(vec![json!("elements")], "array", Some(other))]),
     }
     match obj.get("appState") {
         None if create => input.app_state = Some(json!({})),
         None => {}
         Some(v) => match sanitize_app_state(v) {
             Some(s) => input.app_state = Some(s),
-            None if !v.is_object() => issues.push(invalid_type(&[json!("appState")], "object", v)),
-            None => issues.push(json!({"code": "custom", "path": ["appState"], "message": "Invalid input"})),
+            None => push(&mut issues, crate::zodlike::app_state_issues(&vec![json!("appState")], v)),
         },
     }
     match obj.get("files") {
         None | Some(Value::Null) => {}
         Some(Value::Object(m)) => input.files = Some(m.clone()),
-        Some(_) => issues.push(json!({"code": "invalid_union", "path": ["files"], "message": "Invalid input"})),
+        Some(other) => {
+            use crate::zodlike::{invalid_type as it, union};
+            push(&mut issues, union(vec![json!("files")], vec![vec![it(vec![], "record", Some(other))], vec![it(vec![], "null", Some(other))]]));
+        }
     }
     if !create {
         if let Some(v) = obj.get("version") {
@@ -144,12 +164,60 @@ fn parse_base(body: Option<&Value>, create: bool) -> Parsed {
                 Some(n) if n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0 && n > 0.0 => {
                     input.version = Some(n as i64)
                 }
-                Some(_) => issues.push(json!({"code": "too_small", "path": ["version"], "message": "Invalid input"})),
-                None => issues.push(invalid_type(&[json!("version")], "number", v)),
+                Some(n) => {
+                    // z.number().int().positive()
+                    if n.fract() != 0.0 || n.abs() > 9_007_199_254_740_991.0 {
+                        push(&mut issues, vec![crate::zodlike::Issue {
+                            value: json!({"expected": "int", "format": "safeint", "code": "invalid_type", "path": ["version"],
+                                          "message": "Invalid input: expected int, received number"}),
+                            aborted: true,
+                        }]);
+                    } else {
+                        push(&mut issues, vec![crate::zodlike::Issue {
+                            value: json!({"origin": "number", "code": "too_small", "minimum": 0, "inclusive": false, "path": ["version"],
+                                          "message": "Too small: expected number to be >0"}),
+                            aborted: false,
+                        }]);
+                    }
+                }
+                None => push(&mut issues, vec![crate::zodlike::invalid_type(vec![json!("version")], "number", Some(v))]),
             }
         }
     }
-    Parsed { input, issues }
+    Parsed { input, issues, aborted }
+}
+
+/// The schema-level `.refine` still runs when only non-aborting issues exist; a
+/// sanitisation failure then adds its custom issue (DrawingSanitizationError escapes).
+fn refine_after_issues(body: Option<&Value>, mut issues: Vec<Value>, aborted: bool, update: bool) -> SchemaError {
+    if aborted {
+        return SchemaError::Issues(issues);
+    }
+    let obj = body.and_then(|b| b.as_object()).cloned().unwrap_or_default();
+    let has_scene = obj.get("elements").is_some() || obj.get("appState").is_some() || obj.get("files").is_some();
+    if update && !has_scene {
+        return SchemaError::Issues(issues);
+    }
+    let elements = obj.get("elements").cloned().unwrap_or(json!([]));
+    let app_state = match obj.get("appState") {
+        Some(v @ Value::Object(_)) => v.clone(),
+        Some(v) if !update => v.clone(),
+        _ => json!({}),
+    };
+    let files = match obj.get("files") {
+        Some(Value::Null) | None => if update { Some(json!({})) } else { None },
+        Some(v) => Some(v.clone()),
+    };
+    let preview = obj.get("preview").cloned();
+    match sanitize_drawing_data(&elements, &app_state, files.as_ref(), preview.as_ref()) {
+        Ok(_) => SchemaError::Issues(issues),
+        Err(SanitizeFailure::Drawing(e)) => SchemaError::Thrown(ApiError::operational(e.status, e.message)),
+        Err(SanitizeFailure::Invalid) => {
+            eprintln!("Sanitization failed: Error: Invalid or malicious drawing data detected");
+            issues.push(custom("Invalid or malicious drawing data detected"));
+            SchemaError::Issues(issues)
+        }
+    }
 }
 
 fn thrown(f: SanitizeFailure) -> Result<(), SchemaError> {
@@ -164,9 +232,9 @@ fn thrown(f: SanitizeFailure) -> Result<(), SchemaError> {
 
 /// drawingCreateSchema.safeParse(req.body)
 pub fn parse_create(body: Option<&Value>) -> Result<DrawingInput, SchemaError> {
-    let Parsed { mut input, issues } = parse_base(body, true);
+    let Parsed { mut input, issues, aborted } = parse_base(body, true);
     if !issues.is_empty() {
-        return Err(SchemaError::Issues(issues));
+        return Err(refine_after_issues(body, issues, aborted, false));
     }
     let elements = Value::Array(input.elements.clone().unwrap_or_default());
     let app_state = input.app_state.clone().unwrap_or(json!({}));
@@ -189,9 +257,9 @@ pub fn parse_create(body: Option<&Value>) -> Result<DrawingInput, SchemaError> {
 
 /// drawingUpdateSchema.safeParse(req.body) (refine = sanitizeDrawingUpdateData)
 pub fn parse_update(body: Option<&Value>) -> Result<DrawingInput, SchemaError> {
-    let Parsed { mut input, issues } = parse_base(body, false);
+    let Parsed { mut input, issues, aborted } = parse_base(body, false);
     if !issues.is_empty() {
-        return Err(SchemaError::Issues(issues));
+        return Err(refine_after_issues(body, issues, aborted, true));
     }
     let has_scene = input.elements.is_some() || input.app_state.is_some() || input.files.is_some();
     if has_scene {

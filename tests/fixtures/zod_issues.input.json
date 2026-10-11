@@ -1,0 +1,236 @@
+{
+ "creates": [
+  {
+   "elements": [
+    {
+     "x": "nope"
+    }
+   ],
+   "appState": {}
+  },
+  {
+   "elements": "notarray",
+   "appState": {}
+  },
+  {
+   "elements": [
+    {
+     "id": ""
+    }
+   ],
+   "appState": {}
+  },
+  {
+   "elements": [
+    {
+     "id": "a",
+     "groupIds": [
+      1
+     ]
+    }
+   ],
+   "appState": {}
+  },
+  {
+   "elements": [],
+   "appState": {
+    "gridSize": 5000
+   }
+  },
+  {
+   "elements": [],
+   "appState": {
+    "currentItemFillStyle": "zigzag"
+   }
+  },
+  {
+   "elements": [],
+   "appState": {
+    "zoom": {
+     "value": 0
+    }
+   }
+  },
+  {
+   "elements": [],
+   "appState": {
+    "foo": ""
+   }
+  },
+  {
+   "elements": [],
+   "appState": "x"
+  },
+  {
+   "name": "",
+   "elements": [],
+   "appState": {}
+  },
+  {
+   "name": 5,
+   "elements": [],
+   "appState": {}
+  },
+  {
+   "elements": [],
+   "appState": {},
+   "collectionId": 7
+  },
+  {
+   "elements": [],
+   "appState": {},
+   "files": "x"
+  },
+  {
+   "elements": [],
+   "appState": {},
+   "preview": 3
+  },
+  {
+   "elements": [
+    {
+     "fontFamily": true
+    }
+   ],
+   "appState": {
+    "selectedElementIds": {
+     "a": "yes"
+    }
+   }
+  },
+  {
+   "elements": [
+    {
+     "fontFamily": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+   ],
+   "appState": {}
+  },
+  {
+   "elements": [],
+   "appState": {
+    "currentItemRoundness": {
+     "type": "round",
+     "value": 2
+    }
+   }
+  },
+  {
+   "elements": [],
+   "appState": {
+    "currentItemRoundness": "oval"
+   }
+  },
+  {
+   "elements": [],
+   "appState": {
+    "activeTool": {
+     "locked": true
+    }
+   }
+  },
+  {
+   "elements": [],
+   "appState": {
+    "zoom": {}
+   }
+  },
+  {
+   "elements": [],
+   "appState": {
+    "selection": [
+     "a",
+     1
+    ]
+   }
+  },
+  {
+   "elements": [],
+   "appState": {
+    "activeEmbeddable": {
+     "elementId": "e"
+    }
+   }
+  },
+  {
+   "elements": [
+    5
+   ],
+   "appState": {}
+  },
+  {
+   "elements": [
+    {
+     "customData": [
+      1
+     ]
+    }
+   ],
+   "appState": {}
+  },
+  {
+   "elements": [
+    {
+     "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+   ],
+   "appState": {
+    "gridStep": 0
+   }
+  },
+  {
+   "collectionId": "",
+   "elements": [],
+   "appState": {}
+  },
+  {
+   "collectionId": "   ",
+   "elements": [],
+   "appState": {}
+  },
+  {
+   "elements": [],
+   "appState": {
+    "currentItemFontFamily": -1
+   }
+  }
+ ],
+ "updates": [
+  {
+   "version": 0
+  },
+  {
+   "version": 1.5
+  },
+  {
+   "version": "1"
+  },
+  {
+   "version": -2
+  },
+  {
+   "version": 1,
+   "elements": [
+    {
+     "x": "a"
+    }
+   ]
+  },
+  {
+   "version": 1,
+   "appState": {
+    "gridSize": -1
+   }
+  },
+  {
+   "name": "",
+   "version": 0
+  },
+  {
+   "preview": 5
+  },
+  {
+   "files": 3
+  }
+ ]
+}

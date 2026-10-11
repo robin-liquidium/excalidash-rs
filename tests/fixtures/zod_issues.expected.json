@@ -1,0 +1,831 @@
+{
+ "creates": [
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "number",
+      "code": "invalid_type",
+      "path": [
+       "elements",
+       0,
+       "x"
+      ],
+      "message": "Invalid input: expected number, received string"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "array",
+      "code": "invalid_type",
+      "path": [
+       "elements"
+      ],
+      "message": "Invalid input: expected array, received string"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "string",
+      "code": "too_small",
+      "minimum": 1,
+      "inclusive": true,
+      "path": [
+       "elements",
+       0,
+       "id"
+      ],
+      "message": "Too small: expected string to have >=1 characters"
+     },
+     {
+      "code": "custom",
+      "path": [],
+      "message": "Invalid or malicious drawing data detected"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "string",
+      "code": "invalid_type",
+      "path": [
+       "elements",
+       0,
+       "groupIds",
+       0
+      ],
+      "message": "Invalid input: expected string, received number"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "number",
+      "code": "too_big",
+      "maximum": 1000,
+      "inclusive": true,
+      "path": [
+       "appState",
+       "gridSize"
+      ],
+      "message": "Too big: expected number to be <=1000"
+     },
+     {
+      "code": "custom",
+      "path": [],
+      "message": "Invalid or malicious drawing data detected"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "code": "invalid_value",
+      "values": [
+       "solid",
+       "hachure",
+       "cross-hatch",
+       "dots"
+      ],
+      "path": [
+       "appState",
+       "currentItemFillStyle"
+      ],
+      "message": "Invalid option: expected one of \"solid\"|\"hachure\"|\"cross-hatch\"|\"dots\""
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "number",
+      "code": "too_small",
+      "minimum": 0.01,
+      "inclusive": true,
+      "path": [
+       "appState",
+       "zoom",
+       "value"
+      ],
+      "message": "Too small: expected number to be >=0.01"
+     },
+     {
+      "code": "custom",
+      "path": [],
+      "message": "Invalid or malicious drawing data detected"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "code": "custom",
+      "path": [
+       "appState",
+       "foo"
+      ],
+      "message": "Invalid input"
+     },
+     {
+      "code": "custom",
+      "path": [],
+      "message": "Invalid or malicious drawing data detected"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "object",
+      "code": "invalid_type",
+      "path": [
+       "appState"
+      ],
+      "message": "Invalid input: expected object, received string"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "string",
+      "code": "too_small",
+      "minimum": 1,
+      "inclusive": true,
+      "path": [
+       "name"
+      ],
+      "message": "Too small: expected string to have >=1 characters"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "string",
+      "code": "invalid_type",
+      "path": [
+       "name"
+      ],
+      "message": "Invalid input: expected string, received number"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "code": "invalid_union",
+      "errors": [
+       [
+        {
+         "expected": "string",
+         "code": "invalid_type",
+         "path": [],
+         "message": "Invalid input: expected string, received number"
+        }
+       ],
+       [
+        {
+         "expected": "null",
+         "code": "invalid_type",
+         "path": [],
+         "message": "Invalid input: expected null, received number"
+        }
+       ]
+      ],
+      "path": [
+       "collectionId"
+      ],
+      "message": "Invalid input"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "code": "invalid_union",
+      "errors": [
+       [
+        {
+         "expected": "record",
+         "code": "invalid_type",
+         "path": [],
+         "message": "Invalid input: expected record, received string"
+        }
+       ],
+       [
+        {
+         "expected": "null",
+         "code": "invalid_type",
+         "path": [],
+         "message": "Invalid input: expected null, received string"
+        }
+       ]
+      ],
+      "path": [
+       "files"
+      ],
+      "message": "Invalid input"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "string",
+      "code": "invalid_type",
+      "path": [
+       "preview"
+      ],
+      "message": "Invalid input: expected string, received number"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "code": "invalid_union",
+      "errors": [
+       [
+        {
+         "expected": "number",
+         "code": "invalid_type",
+         "path": [],
+         "message": "Invalid input: expected number, received boolean"
+        }
+       ],
+       [
+        {
+         "expected": "string",
+         "code": "invalid_type",
+         "path": [],
+         "message": "Invalid input: expected string, received boolean"
+        }
+       ]
+      ],
+      "path": [
+       "elements",
+       0,
+       "fontFamily"
+      ],
+      "message": "Invalid input"
+     },
+     {
+      "expected": "boolean",
+      "code": "invalid_type",
+      "path": [
+       "appState",
+       "selectedElementIds",
+       "a"
+      ],
+      "message": "Invalid input: expected boolean, received string"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "string",
+      "code": "too_big",
+      "maximum": 200,
+      "inclusive": true,
+      "path": [
+       "elements",
+       0,
+       "fontFamily"
+      ],
+      "message": "Too big: expected string to have <=200 characters"
+     },
+     {
+      "code": "custom",
+      "path": [],
+      "message": "Invalid or malicious drawing data detected"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "number",
+      "code": "too_big",
+      "maximum": 1,
+      "inclusive": true,
+      "path": [
+       "appState",
+       "currentItemRoundness",
+       "value"
+      ],
+      "message": "Too big: expected number to be <=1"
+     },
+     {
+      "code": "custom",
+      "path": [],
+      "message": "Invalid or malicious drawing data detected"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "code": "invalid_union",
+      "errors": [
+       [
+        {
+         "code": "invalid_value",
+         "values": [
+          "sharp",
+          "round"
+         ],
+         "path": [],
+         "message": "Invalid option: expected one of \"sharp\"|\"round\""
+        }
+       ],
+       [
+        {
+         "expected": "object",
+         "code": "invalid_type",
+         "path": [],
+         "message": "Invalid input: expected object, received string"
+        }
+       ]
+      ],
+      "path": [
+       "appState",
+       "currentItemRoundness"
+      ],
+      "message": "Invalid input"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "string",
+      "code": "invalid_type",
+      "path": [
+       "appState",
+       "activeTool",
+       "type"
+      ],
+      "message": "Invalid input: expected string, received undefined"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "number",
+      "code": "invalid_type",
+      "path": [
+       "appState",
+       "zoom",
+       "value"
+      ],
+      "message": "Invalid input: expected number, received undefined"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "string",
+      "code": "invalid_type",
+      "path": [
+       "appState",
+       "selection",
+       1
+      ],
+      "message": "Invalid input: expected string, received number"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "string",
+      "code": "invalid_type",
+      "path": [
+       "appState",
+       "activeEmbeddable",
+       "state"
+      ],
+      "message": "Invalid input: expected string, received undefined"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "object",
+      "code": "invalid_type",
+      "path": [
+       "elements",
+       0
+      ],
+      "message": "Invalid input: expected object, received number"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "record",
+      "code": "invalid_type",
+      "path": [
+       "elements",
+       0,
+       "customData"
+      ],
+      "message": "Invalid input: expected record, received array"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "string",
+      "code": "too_big",
+      "maximum": 200,
+      "inclusive": true,
+      "path": [
+       "elements",
+       0,
+       "id"
+      ],
+      "message": "Too big: expected string to have <=200 characters"
+     },
+     {
+      "origin": "number",
+      "code": "too_small",
+      "minimum": 1,
+      "inclusive": true,
+      "path": [
+       "appState",
+       "gridStep"
+      ],
+      "message": "Too small: expected number to be >=1"
+     },
+     {
+      "code": "custom",
+      "path": [],
+      "message": "Invalid or malicious drawing data detected"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "string",
+      "code": "too_small",
+      "minimum": 1,
+      "inclusive": true,
+      "path": [
+       "collectionId"
+      ],
+      "message": "Too small: expected string to have >=1 characters"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "string",
+      "code": "too_small",
+      "minimum": 1,
+      "inclusive": true,
+      "path": [
+       "collectionId"
+      ],
+      "message": "Too small: expected string to have >=1 characters"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "number",
+      "code": "too_small",
+      "minimum": 0,
+      "inclusive": true,
+      "path": [
+       "appState",
+       "currentItemFontFamily"
+      ],
+      "message": "Too small: expected number to be >=0"
+     },
+     {
+      "code": "custom",
+      "path": [],
+      "message": "Invalid or malicious drawing data detected"
+     }
+    ]
+   }
+  ]
+ ],
+ "updates": [
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "number",
+      "code": "too_small",
+      "minimum": 0,
+      "inclusive": false,
+      "path": [
+       "version"
+      ],
+      "message": "Too small: expected number to be >0"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "int",
+      "format": "safeint",
+      "code": "invalid_type",
+      "path": [
+       "version"
+      ],
+      "message": "Invalid input: expected int, received number"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "number",
+      "code": "invalid_type",
+      "path": [
+       "version"
+      ],
+      "message": "Invalid input: expected number, received string"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "number",
+      "code": "too_small",
+      "minimum": 0,
+      "inclusive": false,
+      "path": [
+       "version"
+      ],
+      "message": "Too small: expected number to be >0"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "number",
+      "code": "invalid_type",
+      "path": [
+       "elements",
+       0,
+       "x"
+      ],
+      "message": "Invalid input: expected number, received string"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "number",
+      "code": "too_small",
+      "minimum": 0,
+      "inclusive": true,
+      "path": [
+       "appState",
+       "gridSize"
+      ],
+      "message": "Too small: expected number to be >=0"
+     },
+     {
+      "code": "custom",
+      "path": [],
+      "message": "Invalid or malicious drawing data detected"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "origin": "string",
+      "code": "too_small",
+      "minimum": 1,
+      "inclusive": true,
+      "path": [
+       "name"
+      ],
+      "message": "Too small: expected string to have >=1 characters"
+     },
+     {
+      "origin": "number",
+      "code": "too_small",
+      "minimum": 0,
+      "inclusive": false,
+      "path": [
+       "version"
+      ],
+      "message": "Too small: expected number to be >0"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "expected": "string",
+      "code": "invalid_type",
+      "path": [
+       "preview"
+      ],
+      "message": "Invalid input: expected string, received number"
+     }
+    ]
+   }
+  ],
+  [
+   400,
+   {
+    "error": "Invalid drawing payload",
+    "details": [
+     {
+      "code": "invalid_union",
+      "errors": [
+       [
+        {
+         "expected": "record",
+         "code": "invalid_type",
+         "path": [],
+         "message": "Invalid input: expected record, received number"
+        }
+       ],
+       [
+        {
+         "expected": "null",
+         "code": "invalid_type",
+         "path": [],
+         "message": "Invalid input: expected null, received number"
+        }
+       ]
+      ],
+      "path": [
+       "files"
+      ],
+      "message": "Invalid input"
+     }
+    ]
+   }
+  ]
+ ]
+}

@@ -181,26 +181,9 @@ pub async fn delete_permission(State(st): State<AppState>, ctx: Ctx, Path((id, p
     ok(json!({ "success": true }))
 }
 
-/// JS `new Date(string).getTime()` for the formats clients send (ISO 8601 and friends).
+/// JS `new Date(string).getTime()` (V8 semantics, see `crate::jsdate`).
 fn parse_js_date(s: &str) -> Option<i64> {
-    if let Some(ms) = crate::util::parse_date_ms(s) {
-        return Some(ms);
-    }
-    // ISO without seconds: 2026-01-01T10:00Z / 2026-01-01T10:00
-    for fmt in ["%Y-%m-%dT%H:%M%#z", "%Y-%m-%dT%H:%M%:z"] {
-        if let Ok(d) = chrono::DateTime::parse_from_str(s, fmt) {
-            return Some(d.timestamp_millis());
-        }
-    }
-    if let Some(stripped) = s.strip_suffix('Z') {
-        if let Ok(n) = chrono::NaiveDateTime::parse_from_str(stripped, "%Y-%m-%dT%H:%M") {
-            return Some(n.and_utc().timestamp_millis());
-        }
-    }
-    if let Ok(n) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M") {
-        return Some(n.and_utc().timestamp_millis());
-    }
-    None
+    crate::jsdate::parse(s)
 }
 
 /// POST /drawings/:id/link-shares
