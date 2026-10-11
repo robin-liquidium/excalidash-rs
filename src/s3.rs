@@ -94,6 +94,18 @@ impl S3Client {
         })
     }
 
+    /// Explicit keys (upstream passes them as `credentials`) or the AWS default chain.
+    async fn creds(&self, http: &reqwest::Client) -> Result<Credentials, S3Error> {
+        if let Some(c) = &self.credentials {
+            return Ok(c.clone());
+        }
+        let c = crate::aws_credentials::resolve(http).await.map_err(S3Error)?;
+        Ok(match c.session_token {
+            Some(t) => Credentials::new_with_token(c.access_key_id, c.secret_access_key, t),
+            None => Credentials::new(c.access_key_id, c.secret_access_key),
+        })
+    }
+
     pub fn bucket_name(&self) -> &str {
         &self.bucket_name
     }
@@ -121,14 +133,16 @@ impl S3Client {
     }
 
     /// `generatePresignedDownloadUrl(key, expiresIn, overrides)`
-    pub fn presigned_download_url(
+    pub async fn presigned_download_url(
         &self,
+        http: &reqwest::Client,
         key: &str,
         expires_in_secs: u64,
         content_type: Option<&str>,
         content_disposition: Option<&str>,
-    ) -> String {
-        let mut action = self.bucket.get_object(self.credentials.as_ref(), key);
+    ) -> Result<String, S3Error> {
+        let creds = self.creds(http).await?;
+        let mut action = self.bucket.get_object(Some(&creds), key);
         let q = action.query_mut();
         q.insert("response-cache-control", IMMUTABLE_CACHE);
         if let Some(ct) = content_type {
@@ -137,7 +151,7 @@ impl S3Client {
         if let Some(cd) = content_disposition {
             q.insert("response-content-disposition", cd.to_string());
         }
-        action.sign(Duration::from_secs(expires_in_secs)).to_string()
+        Ok(action.sign(Duration::from_secs(expires_in_secs)).to_string())
     }
 
     async fn send(
@@ -170,8 +184,9 @@ impl S3Client {
 
     /// `uploadBuffer(key, body, mimeType)`
     pub async fn upload_buffer(&self, http: &reqwest::Client, key: &str, body: Vec<u8>, mime_type: &str) -> Result<(), S3Error> {
+        let creds = self.creds(http).await?;
         let headers = [("content-type", mime_type.to_string()), ("cache-control", IMMUTABLE_CACHE.to_string())];
-        let mut action = self.bucket.put_object(self.credentials.as_ref(), key);
+        let mut action = self.bucket.put_object(Some(&creds), key);
         for (k, v) in &headers {
             action.headers_mut().insert(*k, v.clone());
         }
@@ -182,17 +197,19 @@ impl S3Client {
 
     /// `downloadBuffer(key)`
     pub async fn download_buffer(&self, http: &reqwest::Client, key: &str) -> Result<Vec<u8>, S3Error> {
-        let url = self.bucket.get_object(self.credentials.as_ref(), key).sign(SIGN_TTL);
+        let creds = self.creds(http).await?;
+        let url = self.bucket.get_object(Some(&creds), key).sign(SIGN_TTL);
         let (_, bytes) = self.send(http, reqwest::Method::GET, url, &[], None, None).await?;
         Ok(bytes.to_vec())
     }
 
     /// `listS3Objects(prefix)` — follows continuation tokens.
     pub async fn list_objects(&self, http: &reqwest::Client, prefix: &str) -> Result<Vec<S3Object>, S3Error> {
+        let creds = self.creds(http).await?;
         let mut results = Vec::new();
         let mut token: Option<String> = None;
         loop {
-            let mut action = ListObjectsV2::new(&self.bucket, self.credentials.as_ref());
+            let mut action = ListObjectsV2::new(&self.bucket, Some(&creds));
             action.with_prefix(prefix.to_string());
             if let Some(t) = &token {
                 action.with_continuation_token(t.clone());
@@ -216,6 +233,7 @@ impl S3Client {
 
     /// `copyS3Object(sourceKey, destKey, mimeType?)` — server-side copy.
     pub async fn copy_object(&self, http: &reqwest::Client, source_key: &str, dest_key: &str, mime_type: Option<&str>) -> Result<(), S3Error> {
+        let creds = self.creds(http).await?;
         let mut headers = vec![
             ("x-amz-copy-source", format!("{}/{source_key}", self.bucket_name)),
             ("cache-control", IMMUTABLE_CACHE.to_string()),
@@ -224,7 +242,7 @@ impl S3Client {
         if let Some(m) = mime_type {
             headers.push(("content-type", m.to_string()));
         }
-        let mut action = self.bucket.put_object(self.credentials.as_ref(), dest_key);
+        let mut action = self.bucket.put_object(Some(&creds), dest_key);
         for (k, v) in &headers {
             action.headers_mut().insert(*k, v.clone());
         }
@@ -239,14 +257,16 @@ impl S3Client {
 
     /// `deleteS3Object(key)`
     pub async fn delete_object(&self, http: &reqwest::Client, key: &str) -> Result<(), S3Error> {
-        let url = self.bucket.delete_object(self.credentials.as_ref(), key).sign(SIGN_TTL);
+        let creds = self.creds(http).await?;
+        let url = self.bucket.delete_object(Some(&creds), key).sign(SIGN_TTL);
         self.send(http, reqwest::Method::DELETE, url, &[], None, None).await?;
         Ok(())
     }
 
     /// `checkBucketReachable(timeoutMs)` — HeadBucket with a hard timeout; never fails.
     pub async fn check_bucket_reachable(&self, http: &reqwest::Client, timeout_ms: u64) -> Result<(), String> {
-        let url = self.bucket.head_bucket(self.credentials.as_ref()).sign(SIGN_TTL);
+        let creds = self.creds(http).await.map_err(|e| e.0)?;
+        let url = self.bucket.head_bucket(Some(&creds)).sign(SIGN_TTL);
         let fut = self.send(http, reqwest::Method::HEAD, url, &[], None, None);
         match tokio::time::timeout(Duration::from_millis(timeout_ms), fut).await {
             Err(_) => Err(format!("timed out after {timeout_ms}ms")),
@@ -344,13 +364,14 @@ pub fn get_public_url(key: &str) -> Result<String, S3Error> {
     Ok(require()?.public_url(key))
 }
 
-pub fn generate_presigned_download_url(
+pub async fn generate_presigned_download_url(
+    http: &reqwest::Client,
     key: &str,
     expires_in_secs: u64,
     content_type: Option<&str>,
     content_disposition: Option<&str>,
 ) -> Result<String, S3Error> {
-    Ok(require()?.presigned_download_url(key, expires_in_secs, content_type, content_disposition))
+    require()?.presigned_download_url(http, key, expires_in_secs, content_type, content_disposition).await
 }
 
 pub async fn upload_buffer(http: &reqwest::Client, key: &str, body: Vec<u8>, mime_type: &str) -> Result<(), S3Error> {
@@ -413,14 +434,18 @@ mod tests {
 
     #[test]
     fn url_styles_follow_sdk_rules() {
+        crate::net::install_crypto_provider();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let http = reqwest::Client::new();
+        let presign = |c: &S3Client, k: &str, ct: Option<&str>, cd: Option<&str>| rt.block_on(c.presigned_download_url(&http, k, 60, ct, cd)).unwrap();
         let aws = S3Client::new(&cfg(None, false, None)).unwrap();
-        assert!(aws.presigned_download_url("k/a.png", 60, None, None).starts_with("https://my-bucket.s3.eu-west-1.amazonaws.com/k/a.png?"));
+        assert!(presign(&aws, "k/a.png", None, None).starts_with("https://my-bucket.s3.eu-west-1.amazonaws.com/k/a.png?"));
         let minio = S3Client::new(&cfg(Some("http://127.0.0.1:9000"), false, None)).unwrap();
-        assert!(minio.presigned_download_url("k.png", 60, None, None).starts_with("http://127.0.0.1:9000/my-bucket/k.png?"));
+        assert!(presign(&minio, "k.png", None, None).starts_with("http://127.0.0.1:9000/my-bucket/k.png?"));
         let vhost = S3Client::new(&cfg(Some("https://oss.example.com"), false, None)).unwrap();
-        assert!(vhost.presigned_download_url("k.png", 60, None, None).starts_with("https://my-bucket.oss.example.com/k.png?"));
+        assert!(presign(&vhost, "k.png", None, None).starts_with("https://my-bucket.oss.example.com/k.png?"));
         let forced = S3Client::new(&cfg(Some("https://minio.example.com/base"), true, None)).unwrap();
-        let url = forced.presigned_download_url("k.png", 60, Some("image/png"), Some("attachment"));
+        let url = presign(&forced, "k.png", Some("image/png"), Some("attachment"));
         assert!(url.starts_with("https://minio.example.com/base/my-bucket/k.png?"), "{url}");
         assert!(url.contains("response-content-type=image%2Fpng"));
         assert!(url.contains("response-content-disposition=attachment"));

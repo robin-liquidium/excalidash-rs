@@ -284,7 +284,7 @@ fn client_operations() {
         let dest = client.build_key("owner", "copy", "image", "png", None);
         client.copy_object(&h, &src, &dest, Some("image/webp")).await.unwrap();
         assert_eq!(client.download_buffer(&h, &dest).await.unwrap(), vec![7, 7, 7]);
-        let url = client.presigned_download_url(&dest, 60, None, None);
+        let url = client.presigned_download_url(&h, &dest, 60, None, None).await.unwrap();
         let r = h.get(&url).send().await.unwrap();
         assert_eq!(r.headers()["content-type"], "image/webp");
         // Pagination-independent listing by prefix.
@@ -346,4 +346,83 @@ fn duplicate_copies_and_delete_removes_s3_objects() {
     assert_eq!(rt.block_on(client.download_buffer(&http(), &key)).unwrap(), vec![7u8, 7, 7]);
     let got = owner.get(&format!("/files/{new_id}/img-a"));
     assert_eq!(got.status, 302);
+}
+
+/// No explicit keys: the AWS default chain supplies credentials (upstream leaves
+/// `credentials` unset and the SDK resolves them). Covers a shared credentials
+/// profile and an ECS-style container credentials endpoint.
+#[test]
+fn default_credential_chain_profile_and_container() {
+    if !enabled() {
+        return;
+    }
+    let bucket = create_bucket();
+    let ep = endpoint();
+    let (ak, sk) = (env_or("EXRS_TEST_S3_ACCESS_KEY", "minio"), env_or("EXRS_TEST_S3_SECRET_KEY", "minio12345"));
+
+    // 1) shared credentials file selected via AWS_PROFILE
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(home.path().join(".aws")).unwrap();
+    std::fs::write(
+        home.path().join(".aws/credentials"),
+        format!("[default]\naws_access_key_id = wrong\naws_secret_access_key = wrong\n\n[exrs]\naws_access_key_id = {ak}\naws_secret_access_key = {sk}\n"),
+    )
+    .unwrap();
+    let home_s = home.path().display().to_string();
+    let s = TestServer::start(&[
+        ("S3_BUCKET", &bucket), ("S3_REGION", "us-east-1"), ("S3_ENDPOINT", &ep), ("S3_FORCE_PATH_STYLE", "true"),
+        ("HOME", &home_s), ("AWS_PROFILE", "exrs"), ("AWS_EC2_METADATA_DISABLED", "true"),
+    ]);
+    let (owner, owner_id) = user_session(&s, "owner@test.local", "USER");
+    let d = create_drawing(&s, &owner_id, "Profile");
+    let up = upload(&owner, &d, "via-profile", vec![1, 2, 3], "image/png");
+    assert_eq!(up.status, 200, "{}\n{}", up.text(), s.output());
+    let got = owner.get(&format!("/files/{d}/via-profile"));
+    assert_eq!(got.status, 302);
+    assert_eq!(reqwest::blocking::get(got.header("location").unwrap()).unwrap().bytes().unwrap().to_vec(), vec![1, 2, 3]);
+    drop(s);
+
+    // 2) container credentials endpoint (AWS_CONTAINER_CREDENTIALS_FULL_URI + auth token)
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let body = format!(r#"{{"AccessKeyId":"{ak}","SecretAccessKey":"{sk}","Expiration":"2099-01-01T00:00:00Z"}}"#);
+    let seen_auth = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let seen = seen_auth.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            use std::io::{BufRead, Write};
+            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            loop {
+                line.clear();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" { break; }
+                if line.to_lowercase().starts_with("authorization:") { *seen.lock().unwrap() = line.trim().to_string(); }
+            }
+            let mut s = stream;
+            let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+        }
+    });
+    let uri = format!("http://127.0.0.1:{port}/creds");
+    let s = TestServer::start(&[
+        ("S3_BUCKET", &bucket), ("S3_REGION", "us-east-1"), ("S3_ENDPOINT", &ep), ("S3_FORCE_PATH_STYLE", "true"),
+        ("AWS_CONTAINER_CREDENTIALS_FULL_URI", &uri), ("AWS_CONTAINER_AUTHORIZATION_TOKEN", "secret-token"),
+        ("AWS_EC2_METADATA_DISABLED", "true"),
+    ]);
+    let (owner, owner_id) = user_session(&s, "owner@test.local", "USER");
+    let d = create_drawing(&s, &owner_id, "Container");
+    let up = upload(&owner, &d, "via-container", vec![4, 5], "image/png");
+    assert_eq!(up.status, 200, "{}\n{}", up.text(), s.output());
+    assert_eq!(seen_auth.lock().unwrap().to_lowercase(), "authorization: secret-token");
+    drop(s);
+
+    // 3) nothing available: upload fails like the SDK ("Could not load credentials from any providers")
+    let s = TestServer::start(&[
+        ("S3_BUCKET", &bucket), ("S3_REGION", "us-east-1"), ("S3_ENDPOINT", &ep), ("S3_FORCE_PATH_STYLE", "true"),
+        ("HOME", "/nonexistent"), ("AWS_EC2_METADATA_DISABLED", "true"),
+    ]);
+    let (owner, owner_id) = user_session(&s, "owner@test.local", "USER");
+    let d = create_drawing(&s, &owner_id, "None");
+    let up = upload(&owner, &d, "nope", vec![1], "image/png");
+    assert_eq!(up.status, 500, "{}", up.text());
+    assert!(s.output().contains("Could not load credentials from any providers"), "{}", s.output());
 }

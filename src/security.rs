@@ -87,11 +87,30 @@ fn strip_controls(s: &str) -> String {
         .collect()
 }
 
-const PURIFY_FORBID_CONTENTS: [&str; 26] = [
+// DOMPurify FORBID_CONTENTS, minus `noscript` (jsdom parses it with scripting disabled,
+// so its children are ordinary nodes and survive — verified against upstream).
+const PURIFY_FORBID_CONTENTS: [&str; 25] = [
     "annotation-xml", "audio", "colgroup", "desc", "foreignobject", "foreignObject", "head", "iframe", "math", "mi",
-    "mn", "mo", "ms", "mtext", "noembed", "noframes", "noscript", "plaintext", "script", "style", "svg", "template",
+    "mn", "mo", "ms", "mtext", "noembed", "noframes", "plaintext", "script", "style", "svg", "template",
     "thead", "title", "video", "xmp",
 ];
+
+/// DOMPurify returns input without `<` untouched; a leading `<frameset>` replaces the
+/// parsed body (DOMPurify then yields ""). Returns Some(result) for those shortcuts.
+fn purify_shortcut(input: &str) -> Option<String> {
+    if !input.contains('<') {
+        return Some(input.to_string());
+    }
+    let t = input.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let b = t.as_bytes();
+    if b.len() >= 9 && b[..9].eq_ignore_ascii_case(b"<frameset") {
+        let next = t.get(9..).and_then(|r| r.chars().next());
+        if matches!(next, Some('>') | Some('/') | Some(' ') | Some('\t') | Some('\n') | Some('\r') | Some('\x0c')) {
+            return Some(String::new());
+        }
+    }
+    None
+}
 
 fn text_cleaner() -> &'static ammonia::Builder<'static> {
     static B: OnceLock<ammonia::Builder<'static>> = OnceLock::new();
@@ -99,6 +118,8 @@ fn text_cleaner() -> &'static ammonia::Builder<'static> {
         let mut b = ammonia::Builder::empty();
         b.tag_attributes(std::collections::HashMap::new());
         b.generic_attributes(HashSet::new());
+        // DOMPurify defaults ALLOW_DATA_ATTR / ALLOW_ARIA_ATTR stay on.
+        b.generic_attribute_prefixes(["data-", "aria-"].into_iter().collect());
         b.tags(["b", "i", "u", "em", "strong", "br", "span"].into_iter().collect());
         let content: HashSet<&str> = PURIFY_FORBID_CONTENTS.iter().copied().collect();
         b.clean_content_tags(content);
@@ -119,7 +140,10 @@ pub fn sanitize_text_value(input: &Value, max_length: usize) -> String {
 pub fn sanitize_text(input: &str, max_length: usize) -> String {
     let cleaned = strip_controls(input);
     let truncated = js_slice(&cleaned, max_length);
-    let out = text_cleaner().clean(&truncated).to_string();
+    let out = match purify_shortcut(&truncated) {
+        Some(o) => o,
+        None => text_cleaner().clean(&truncated).to_string(),
+    };
     js_trim(&out).to_string()
 }
 
@@ -161,6 +185,7 @@ fn svg_cleaner() -> &'static ammonia::Builder<'static> {
     B.get_or_init(|| {
         let mut b = ammonia::Builder::empty();
         b.tag_attributes(std::collections::HashMap::new());
+        b.generic_attribute_prefixes(["data-", "aria-"].into_iter().collect());
         b.tags(SVG_TAGS.into_iter().collect());
         b.generic_attributes(SVG_ATTRS.into_iter().collect());
         let content: HashSet<&str> = ["script", "style", "foreignObject", "foreignobject", "iframe", "title", "desc", "noscript", "template", "math"]
@@ -178,7 +203,10 @@ fn svg_cleaner() -> &'static ammonia::Builder<'static> {
 
 /// sanitizeSvg
 pub fn sanitize_svg(svg: &str) -> String {
-    let sanitized = svg_cleaner().clean(svg).to_string();
+    let sanitized = match purify_shortcut(svg) {
+        Some(o) => o,
+        None => svg_cleaner().clean(svg).to_string(),
+    };
     let sanitized = js_trim(&sanitized).to_string();
     // Crop/frame masks only refer to local SVG geometry.
     static ATTR: OnceLock<regex::Regex> = OnceLock::new();

@@ -326,20 +326,74 @@ fn serve_blocking(root: &Path, method: &Method, headers: &HeaderMap, uri_path: &
         return r;
     }
 
-    // Single byte-range support for uncompressed bodies.
+    // ngx_http_range_filter: single ranges, multipart/byteranges, 416 (not with gzip).
     if !gzipped {
         if let Some(range) = headers.get(header::RANGE).and_then(|v| v.to_str().ok()) {
-            if let Some((start, end)) = parse_range(range, body_bytes.len() as u64) {
-                let slice = body_bytes[start as usize..=end as usize].to_vec();
-                let total = body_bytes.len();
-                let h = builder.headers_mut().unwrap();
-                h.insert(
-                    header::CONTENT_RANGE,
-                    HeaderValue::from_str(&format!("bytes {start}-{end}/{total}")).unwrap(),
-                );
-                h.insert(header::CONTENT_LENGTH, HeaderValue::from(slice.len()));
-                let body = if method == Method::HEAD { Body::empty() } else { Body::from(slice) };
-                return builder.status(StatusCode::PARTIAL_CONTENT).body(body).unwrap();
+            let total = body_bytes.len() as u64;
+            match parse_ranges(range, total) {
+                RangeResult::Ignore => {}
+                RangeResult::Unsatisfiable => {
+                    // The range filter turns the prepared 200 into nginx's 416 page; the
+                    // location's caching/security headers computed for the 200 remain.
+                    let reason = "Requested Range Not Satisfiable";
+                    let body = format!(
+                        "<html>\r\n<head><title>416 {reason}</title></head>\r\n<body>\r\n<center><h1>416 {reason}</h1></center>\r\n<hr><center>{NGINX_SERVER}</center>\r\n</body>\r\n</html>\r\n"
+                    );
+                    let mut r = Response::new(Body::from(body));
+                    *r.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
+                    r.extensions_mut().insert(hyper::ext::ReasonPhrase::from_static(b"Requested Range Not Satisfiable"));
+                    let h = r.headers_mut();
+                    for (k, v) in builder.headers_ref().unwrap() {
+                        if [header::CONTENT_TYPE, header::LAST_MODIFIED, header::ETAG, header::ACCEPT_RANGES, header::VARY].contains(k) {
+                            continue;
+                        }
+                        h.append(k.clone(), v.clone());
+                    }
+                    h.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
+                    if gzip_type(content_type) {
+                        h.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+                    }
+                    h.insert(header::CONTENT_RANGE, HeaderValue::from_str(&format!("bytes */{total}")).unwrap());
+                    if matches!(location, Location::IndexHtml) {
+                        // `add_header Cache-Control ... always` runs again for the error response.
+                        h.append(
+                            header::CACHE_CONTROL,
+                            HeaderValue::from_static("no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"),
+                        );
+                    }
+                    return r;
+                }
+                RangeResult::Ranges(ranges) if ranges.len() == 1 => {
+                    let (start, end) = ranges[0];
+                    let slice = body_bytes[start as usize..=end as usize].to_vec();
+                    let h = builder.headers_mut().unwrap();
+                    h.insert(header::CONTENT_RANGE, HeaderValue::from_str(&format!("bytes {start}-{end}/{total}")).unwrap());
+                    h.insert(header::CONTENT_LENGTH, HeaderValue::from(slice.len()));
+                    h.remove(header::ACCEPT_RANGES);
+                    let body = if method == Method::HEAD { Body::empty() } else { Body::from(slice) };
+                    return builder.status(StatusCode::PARTIAL_CONTENT).body(body).unwrap();
+                }
+                RangeResult::Ranges(ranges) => {
+                    static BOUNDARY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                    let boundary = format!("{:020}", BOUNDARY.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1);
+                    let mut out = Vec::new();
+                    for (start, end) in &ranges {
+                        out.extend_from_slice(
+                            format!("\r\n--{boundary}\r\nContent-Type: {content_type}\r\nContent-Range: bytes {start}-{end}/{total}\r\n\r\n").as_bytes(),
+                        );
+                        out.extend_from_slice(&body_bytes[*start as usize..=*end as usize]);
+                    }
+                    out.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+                    let h = builder.headers_mut().unwrap();
+                    h.insert(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_str(&format!("multipart/byteranges; boundary={boundary}")).unwrap(),
+                    );
+                    h.insert(header::CONTENT_LENGTH, HeaderValue::from(out.len()));
+                    h.remove(header::ACCEPT_RANGES);
+                    let body = if method == Method::HEAD { Body::empty() } else { Body::from(out) };
+                    return builder.status(StatusCode::PARTIAL_CONTENT).body(body).unwrap();
+                }
             }
         }
     }
@@ -368,19 +422,46 @@ fn gz_plain_len(gz: &[u8]) -> u64 {
     }
 }
 
-fn parse_range(v: &str, len: u64) -> Option<(u64, u64)> {
-    let spec = v.strip_prefix("bytes=")?;
-    if spec.contains(',') || len == 0 {
-        return None;
+enum RangeResult {
+    Ignore,
+    Unsatisfiable,
+    Ranges(Vec<(u64, u64)>),
+}
+
+/// ngx_http_range_parse: `bytes=` list of `a-b`, `a-`, `-n`; ranges starting past the end
+/// are dropped; malformed or inverted ranges make the whole header unsatisfiable.
+fn parse_ranges(v: &str, len: u64) -> RangeResult {
+    let Some(spec) = v.strip_prefix("bytes=") else { return RangeResult::Ignore };
+    let mut out = vec![];
+    for part in spec.split(',') {
+        let part = part.trim_matches(' ');
+        let Some((a, b)) = part.split_once('-') else { return RangeResult::Unsatisfiable };
+        let (a, b) = (a.trim_matches(' '), b.trim_matches(' '));
+        let num = |x: &str| if !x.is_empty() && x.bytes().all(|c| c.is_ascii_digit()) { x.parse::<u64>().ok() } else { None };
+        let (start, end) = if a.is_empty() {
+            let Some(n) = num(b) else { return RangeResult::Unsatisfiable };
+            if n == 0 {
+                continue;
+            }
+            (len.saturating_sub(n), len.saturating_sub(1))
+        } else {
+            let Some(s) = num(a) else { return RangeResult::Unsatisfiable };
+            let e = if b.is_empty() {
+                len.saturating_sub(1)
+            } else {
+                match num(b) {
+                    Some(e) => e,
+                    None => return RangeResult::Unsatisfiable,
+                }
+            };
+            if s > e {
+                return RangeResult::Unsatisfiable;
+            }
+            (s, e.min(len.saturating_sub(1)))
+        };
+        if start < len {
+            out.push((start, end));
+        }
     }
-    let (a, b) = spec.split_once('-')?;
-    let (start, end) = if a.is_empty() {
-        let n: u64 = b.parse().ok()?;
-        (len.saturating_sub(n), len - 1)
-    } else {
-        let s: u64 = a.parse().ok()?;
-        let e: u64 = if b.is_empty() { len - 1 } else { b.parse::<u64>().ok()?.min(len - 1) };
-        (s, e)
-    };
-    (start <= end && start < len).then_some((start, end))
+    if out.is_empty() { RangeResult::Unsatisfiable } else { RangeResult::Ranges(out) }
 }

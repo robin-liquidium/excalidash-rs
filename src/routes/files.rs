@@ -291,7 +291,10 @@ async fn serve_file(
     // force scriptable types to download.
     let scriptable = record.mime_type == "image/svg+xml" || record.mime_type == "text/html";
     let disposition = if scriptable { "attachment".to_string() } else { format!("inline; filename=\"{file_id}\"") };
-    let url = s3c.presigned_download_url(&key, DOWNLOAD_EXPIRES_IN, Some(&record.mime_type), Some(&disposition));
+    let url = s3c
+        .presigned_download_url(st.http(), &key, DOWNLOAD_EXPIRES_IN, Some(&record.mime_type), Some(&disposition))
+        .await
+        .map_err(|e| crate::http::error::ApiError::internal(e.to_string()))?;
     Ok(express_redirect(&ctx, &url))
 }
 

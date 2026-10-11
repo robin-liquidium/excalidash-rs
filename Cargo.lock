@@ -861,6 +861,7 @@ dependencies = [
  "hex",
  "hmac 0.13.0",
  "http",
+ "hyper",
  "jsonwebtoken",
  "k256",
  "lettre",

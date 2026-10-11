@@ -159,6 +159,8 @@ def header_map(resp, base):
             v = "<own-origin>"
         if k == "location":
             v = v.replace(base, "<own-origin>")
+        if k == "content-type":
+            v = re.sub(r"boundary=\d+", "boundary=<n>", v)
         if k in VOLATILE_HEADERS:
             m.setdefault(k, "<present>")
             continue
@@ -457,6 +459,9 @@ def scenario(R):
     s("directory redirect", "GET", "/assets", compare_body=False)
     s("directory listing forbidden", "GET", "/assets/")
     s("post to static", "POST", "/favicon.svg", compare_body=False)
+    for rng in ("bytes=0-4", "bytes=0-4,10-14", "bytes=-5", "bytes=5000-6000", "bytes=x"):
+        s(f"range {rng}", "GET", "/favicon.svg", headers={"Range": rng}, compare_body=False)
+    s("range on spa index (416)", "GET", "/index.html", headers={"Range": "bytes=99999-"}, compare_body=False)
     rs = s("static asset", "GET", "/", compare_body=False)
     asset = {n: re.search(rb'/assets/[^"]+\.js', r.body).group().decode() for n, r in rs.items()}
     s("static js asset gzip", "GET", lambda v: asset["node"], headers={"Accept-Encoding": "gzip"}, compare_body=False)

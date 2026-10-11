@@ -2,6 +2,7 @@
 pub mod audit;
 pub mod auth;
 pub mod authz;
+pub mod aws_credentials;
 pub mod backups;
 pub mod bootstrap;
 pub mod config;
