@@ -17,7 +17,9 @@ hex = "0.4.3"
 hmac = "0.13.0"
 http = "1.5.0"
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto", "use_pem"] }
+k256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "std"] }
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1", "builder", "tokio1-rustls", "ring", "webpki-roots"] }
+p521 = { version = "0.14.0", default-features = false, features = ["ecdsa", "std"] }
 percent-encoding = "2.3.2"
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.35.0"

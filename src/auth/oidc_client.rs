@@ -712,6 +712,35 @@ fn decoding_key(jwk: &Map<String, Value>, alg: &str) -> Option<jsonwebtoken::Dec
     }
 }
 
+/// ES512 (P-521) and ES256K (secp256k1): not supported by `jsonwebtoken`, verified
+/// directly with RustCrypto. JWS ECDSA signatures are raw `r || s`.
+fn verify_ec_extra(jwt: &str, alg: &str, jwk: &Map<String, Value>) -> Option<bool> {
+    let s = |k: &str| jwk.get(k).and_then(|v| v.as_str());
+    if s("kty")? != "EC" {
+        return None;
+    }
+    let (message, sig_b64) = jwt.rsplit_once('.')?;
+    let sig = crate::util::b64_decode_lenient(sig_b64);
+    let mut sec1 = vec![4u8];
+    sec1.extend(crate::util::b64_decode_lenient(s("x")?));
+    sec1.extend(crate::util::b64_decode_lenient(s("y")?));
+    match (alg, s("crv")?) {
+        ("ES512", "P-521") => {
+            use p521::ecdsa::signature::Verifier;
+            let vk = p521::ecdsa::VerifyingKey::from_sec1_bytes(&sec1).ok()?;
+            let sig = p521::ecdsa::Signature::from_slice(&sig).ok()?;
+            Some(vk.verify(message.as_bytes(), &sig).is_ok())
+        }
+        ("ES256K", "secp256k1") => {
+            use k256::ecdsa::signature::Verifier;
+            let vk = k256::ecdsa::VerifyingKey::from_sec1_bytes(&sec1).ok()?;
+            let sig = k256::ecdsa::Signature::from_slice(&sig).ok()?;
+            Some(vk.verify(message.as_bytes(), &sig).is_ok())
+        }
+        _ => Some(false),
+    }
+}
+
 fn verify_signature(jwt: &str, alg: &str, key: &jsonwebtoken::DecodingKey) -> bool {
     use std::str::FromStr;
     let Ok(a) = jsonwebtoken::Algorithm::from_str(alg) else { return false };
@@ -1027,6 +1056,13 @@ impl Client {
         let (keys, idxs) = self.query_keystore(alg, kid.as_deref(), kty.as_deref()).await?;
         for i in idxs {
             let jwk = &keys[i].jwk;
+            if alg == "ES512" || alg == "ES256K" {
+                if verify_ec_extra(jwt, alg, jwk) == Some(true) {
+                    let crv = jwk.get("crv").and_then(|v| v.as_str()).map(str::to_string);
+                    return Ok(ValidatedJwt { header, payload, crv });
+                }
+                continue;
+            }
             if let Some(key) = decoding_key(jwk, alg) {
                 if verify_signature(jwt, alg, &key) {
                     let crv = jwk.get("crv").and_then(|v| v.as_str()).map(str::to_string);
@@ -1209,5 +1245,41 @@ mod tests {
     fn form_encoding() {
         assert_eq!(form_url_encode("a b+c:d"), "a+b%2Bc%3Ad");
         assert_eq!(qs_escape("a b!*'()~"), "a%20b!*'()~");
+    }
+
+    #[test]
+    fn es512_and_es256k_signatures_verify() {
+        use crate::util::b64url;
+        let msg_parts = |alg: &str| format!("{}.{}", b64url(format!("{{\"alg\":\"{alg}\"}}").as_bytes()), b64url(b"{\"sub\":\"x\"}"));
+        // P-521
+        {
+            use p521::ecdsa::signature::Signer;
+            let mut scalar = [7u8; 66];
+            scalar[0] = 0; // keep below the P-521 group order
+            let sk = p521::ecdsa::SigningKey::from_slice(&scalar).unwrap();
+            let vk = p521::ecdsa::VerifyingKey::from(&sk);
+            let pt = vk.to_sec1_point(false);
+            let b = pt.as_bytes();
+            let jwk: Map<String, Value> = serde_json::from_value(json!({"kty":"EC","crv":"P-521","x": b64url(&b[1..67]),"y": b64url(&b[67..])})).unwrap();
+            let signing = msg_parts("ES512");
+            let sig: p521::ecdsa::Signature = sk.sign(signing.as_bytes());
+            let jwt = format!("{signing}.{}", b64url(&sig.to_bytes()));
+            assert_eq!(verify_ec_extra(&jwt, "ES512", &jwk), Some(true));
+            assert_eq!(verify_ec_extra(&format!("{signing}x.{}", b64url(&sig.to_bytes())), "ES512", &jwk), Some(false));
+        }
+        // secp256k1
+        {
+            use k256::ecdsa::signature::Signer;
+            let sk = k256::ecdsa::SigningKey::from_slice(&[9u8; 32]).unwrap();
+            let vk = k256::ecdsa::VerifyingKey::from(&sk);
+            let pt = vk.to_sec1_point(false);
+            let b = pt.as_bytes();
+            let jwk: Map<String, Value> = serde_json::from_value(json!({"kty":"EC","crv":"secp256k1","x": b64url(&b[1..33]),"y": b64url(&b[33..])})).unwrap();
+            let signing = msg_parts("ES256K");
+            let sig: k256::ecdsa::Signature = sk.sign(signing.as_bytes());
+            let jwt = format!("{signing}.{}", b64url(&sig.to_bytes()));
+            assert_eq!(verify_ec_extra(&jwt, "ES256K", &jwk), Some(true));
+            assert_eq!(verify_ec_extra(&jwt, "ES512", &jwk), Some(false));
+        }
     }
 }

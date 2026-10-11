@@ -20,7 +20,7 @@ PNG_1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADh
 # Headers whose values legitimately differ per run/implementation.
 VOLATILE_HEADERS = {
     "date", "x-request-id", "etag", "content-length", "ratelimit-remaining", "ratelimit-reset",
-    "keep-alive", "connection", "server", "transfer-encoding", "last-modified", "expires",
+    "keep-alive", "connection", "transfer-encoding", "last-modified", "expires",
     "retry-after", "content-disposition",
 }
 
@@ -144,7 +144,7 @@ def cookie_shape(v):
     return f"{name}{'(empty)' if empty else ''};" + ";".join(attrs)
 
 
-IGNORED_HEADERS = {"server", "content-length", "transfer-encoding"}  # server: not impersonated; others: framing only  # Rust does not impersonate nginx's Server header (documented deviation)
+IGNORED_HEADERS = set()  # Rust does not impersonate nginx's Server header (documented deviation)
 
 
 def header_map(resp, base):

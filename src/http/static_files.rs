@@ -13,6 +13,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// `Server` header of the upstream frontend image (nginx in zimengxiong/excalidash-frontend:0.6.5).
+pub const NGINX_SERVER: &str = "nginx/1.31.6";
+
 pub const NGINX_SECURITY_HEADERS: [(&str, &str); 5] = [
     ("x-frame-options", "DENY"),
     ("x-content-type-options", "nosniff"),

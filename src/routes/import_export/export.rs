@@ -275,7 +275,13 @@ pub async fn export_excalidash(State(st): State<AppState>, ctx: Ctx) -> ApiResul
             return Err(ApiError::json(500, json!({"error": "Failed to create archive"})));
         }
     };
-    let mut res = (StatusCode::OK, bytes).into_response();
+    // archiver pipes the archive into the response: chunked transfer, no Content-Length.
+    let chunks: Vec<Result<bytes::Bytes, std::io::Error>> = bytes
+        .chunks(64 * 1024)
+        .map(|c| Ok(bytes::Bytes::copy_from_slice(c)))
+        .collect();
+    let body = axum::body::Body::from_stream(futures_util::stream::iter(chunks));
+    let mut res = (StatusCode::OK, body).into_response();
     let h = res.headers_mut();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/zip"));
     if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {

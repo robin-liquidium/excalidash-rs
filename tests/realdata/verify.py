@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Helper for tests/realdata/run.sh. Mints access tokens with $JWT_SECRET (never printed).
 
+  verify.py seed     DB NODE_API            add an image, history snapshots, an API key, a library item via upstream
   verify.py read     DB NODE_API RUST_API   compare every read endpoint for every active user
   verify.py write    DB RUST_API            create/update/snapshot data through Rust
   verify.py readback DB NODE_API            upstream Node reads what Rust wrote
@@ -24,9 +25,13 @@ def mint(user_id, email):
     return f"{header}.{payload}.{b64(sig)}"
 
 
-def call(api, path, token, method="GET", body=None, csrf=None, cookie_extra=""):
-    h = {"Cookie": f"excalidash-access-token={token}{cookie_extra}", "X-Forwarded-Proto": "https",
-         "Origin": "https://excali.robin.build"}
+def call(api, path, token, method="GET", body=None, csrf=None, cookie_extra="", bearer=None):
+    h = {"X-Forwarded-Proto": "https"}
+    if bearer:
+        h["Authorization"] = f"Bearer {bearer}"
+    else:
+        h["Cookie"] = f"excalidash-access-token={token}{cookie_extra}"
+        h["Origin"] = "https://excali.robin.build"
     data = None
     if body is not None:
         data = json.dumps(body).encode()
@@ -104,6 +109,43 @@ def collect(api, uid, email):
     return out, len(drawings)
 
 
+PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+if mode == "seed":
+    api = sys.argv[3]
+    uid, email = users()[0]
+    t = mint(uid, email)
+    csrf, ck = csrf_for(api, t)
+    st, body, _ = call(api, "/drawings?includeData=true", t)
+    listing = json.loads(body)
+    drawings = listing.get("drawings", listing) if isinstance(listing, dict) else listing
+    seeded = {"snapshots_of": []}
+    for d in drawings[:1]:
+        # Two edits of the real drawing -> two history snapshots of real content.
+        for n in range(2):
+            st, b, _ = call(api, f"/drawings/{d['id']}", t)
+            cur = json.loads(b)
+            els = list(cur.get("elements") or []) + [{"id": f"realdata-seed-{n}", "type": "rectangle", "x": 10 * n, "y": 0, "width": 5, "height": 5, "version": 1}]
+            st, b, _ = call(api, f"/drawings/{d['id']}", t, "PUT", {"elements": els, "appState": cur.get("appState") or {}, "version": cur.get("version")}, csrf, ck)
+            assert st == 200, (st, b[:300])
+        seeded["snapshots_of"].append(d["id"])
+    st, b, _ = call(api, "/drawings", t, "POST", {
+        "name": "realdata image", "elements": [{"id": "img-el", "type": "image", "fileId": "realdata-png", "x": 0, "y": 0, "width": 1, "height": 1}],
+        "appState": {"viewBackgroundColor": "#ffffff"},
+        "files": {"realdata-png": {"id": "realdata-png", "mimeType": "image/png", "dataURL": f"data:image/png;base64,{PNG}", "created": 1700000000000}},
+        "preview": f'<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/png;base64,{PNG}" width="1" height="1"/></svg>'}, csrf, ck)
+    assert st in (200, 201), (st, b[:300])
+    seeded["image_drawing"] = json.loads(b)["id"]
+    st, b, _ = call(api, "/library", t, "PUT", {"items": [{"id": "realdata-lib", "status": "unpublished", "elements": []}]}, csrf, ck)
+    assert st == 200, (st, b[:300])
+    st, b, _ = call(api, "/auth/api-keys", t, "POST", {"name": "realdata check"}, csrf, ck)
+    assert st in (200, 201), (st, b[:300])
+    j = json.loads(b)
+    seeded["api_key"] = j.get("token") or (j.get("apiKey") or {}).get("token")
+    json.dump(seeded, open(STATE, "w"))
+    print(f"seeded via upstream Node: {len(seeded['snapshots_of'])} real drawing(s) edited twice, 1 image drawing, library item, API key")
+    sys.exit(0)
+
 if mode == "read":
     node_api, rust_api = sys.argv[3], sys.argv[4]
     total, bad = 0, 0
@@ -116,6 +158,23 @@ if mode == "read":
                 bad += 1
                 print(f"DIFF user={uid[:8]} {path}\n  node={str(a.get(path))[:400]}\n  rust={str(b.get(path))[:400]}")
         print(f"user {uid[:8]}…: {n} drawings, {len(a)} endpoints compared")
+    # API key created by upstream Node must authenticate against Rust identically.
+    try:
+        seeded = json.load(open(STATE))
+    except FileNotFoundError:
+        seeded = {}
+    if seeded.get("api_key"):
+        for path in ("/drawings", "/collections"):
+            ra = call(node_api, path, None, bearer=seeded["api_key"])
+            rb = call(rust_api, path, None, bearer=seeded["api_key"])
+            total += 1
+            same = ra[0] == rb[0] and norm(json.loads(ra[1])) == norm(json.loads(rb[1]))
+            if not same:
+                bad += 1
+                print(f"DIFF api-key {path}: node={ra[0]} rust={rb[0]}")
+    files = sum(1 for k in a if k.startswith("/files/")) if users() else 0
+    snaps = sum(1 for k in a if "/history/" in k)
+    print(f"covered: {files} file downloads (byte-compared), {snaps} history snapshots, API key auth")
     print(f"real-data read parity: {total - bad}/{total} identical")
     sys.exit(1 if bad else 0)
 
@@ -134,7 +193,9 @@ if mode == "write":
     assert st == 200, (st, body[:300])
     st, body, _ = call(api, "/auth/preferences", t, "PUT", {"theme": "dark"}, csrf, ck)
     print(f"rust write ok: drawing {d['id']} (status prefs {st})")
-    json.dump({"drawing": d["id"], "user": uid, "email": email}, open(STATE, "w"))
+    state = json.load(open(STATE)) if os.path.exists(STATE) else {}
+    state.update({"drawing": d["id"], "user": uid, "email": email})
+    json.dump(state, open(STATE, "w"))
     sys.exit(0)
 
 if mode == "readback":
