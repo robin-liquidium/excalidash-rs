@@ -144,6 +144,15 @@ Header names are sent with upstream's exact spellings (e.g. `X-Request-ID`, `ETa
   `pgbouncer`, `statement_cache_size`, and client certificates (`sslidentity`/`sslpassword`).
 - Not in the default image: build with `--build-arg FEATURES=postgres` (+0.6 MB binary).
 
+**Deliberate deviation: security headers on the app page**
+- Upstream's nginx sends its security headers (CSP, `X-Frame-Options`, `Referrer-Policy`,
+  `Permissions-Policy`, `X-Content-Type-Options`) everywhere except on the HTML shell (an
+  `add_header` inheritance quirk; reported upstream as GHSA-r343-6gfx-3pcp). excalidash-rs also
+  sends them on the HTML shell. The CSP's `script-src` additionally allows the shell's own inline
+  scripts by hash, `'unsafe-eval'` and `'wasm-unsafe-eval'`: Excalidraw's font subsetting
+  (exports) is Emscripten-compiled and needs both; without them it falls back to the esm.sh CDN,
+  which `font-src` blocks. `tests/diff` checks these headers are present and otherwise identical.
+
 **Not observable by clients (protocol level)**
 - The WebSocket `101` handshake also carries a `Date` header (Node's `ws` writes only
   `Upgrade`, `Connection`, `Sec-WebSocket-Accept`).

@@ -123,6 +123,11 @@ fn theme_follow_system_injects_script_and_overrides_preference() {
     let dir = dist.path().to_str().unwrap();
 
     let off = TestServer::start(&[("FRONTEND_DIST_DIR", dir)]);
+    // The HTML shell carries the security headers (deliberate deviation from upstream nginx).
+    let doc = off.client().get("/");
+    assert_eq!(doc.header("x-frame-options").as_deref(), Some("DENY"));
+    let csp = doc.header("content-security-policy").unwrap();
+    assert!(csp.contains("frame-ancestors 'none'") && csp.contains("script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval';"), "{csp}");
     let page = off.client().get("/").text();
     assert!(!page.contains("excalidash-rs-theme.js"), "{page}");
     assert_eq!(off.client().get("/excalidash-rs-theme.js").status, 404, "nginx asset 404 when off");

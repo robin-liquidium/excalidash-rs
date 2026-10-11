@@ -27,6 +27,52 @@ pub const NGINX_SECURITY_HEADERS: [(&str, &str); 5] = [
     ),
 ];
 
+/// Deliberate deviation from upstream: nginx drops the server-level `add_header` set inside
+/// `location = /index.html` (it defines its own), so upstream serves the app document without
+/// CSP or frame protection (reported upstream as GHSA-r343-6gfx-3pcp). We send the same
+/// headers on the HTML shell; the CSP's `script-src` additionally allows the shell's own
+/// inline scripts by hash, so upstream's inline `EXCALIDRAW_ASSET_PATH` setup keeps working.
+fn apply_document_headers(h: &mut HeaderMap, hashes: &[String]) {
+    for (k, v) in NGINX_SECURITY_HEADERS {
+        if k == "content-security-policy" {
+            // Excalidraw's font subsetting (used when exporting) is Emscripten-compiled
+            // HarfBuzz: it compiles WebAssembly and its embind glue builds functions with
+            // `new Function`. Without these, subsetting fails and Excalidraw falls back to
+            // fetching every font from the esm.sh CDN (blocked by font-src).
+            let mut sources = ["'self'", "'unsafe-eval'", "'wasm-unsafe-eval'"].map(String::from).to_vec();
+            sources.extend(hashes.iter().cloned());
+            let csp = v.replacen("script-src 'self'", &format!("script-src {}", sources.join(" ")), 1);
+            if let Ok(val) = HeaderValue::from_str(&csp) {
+                h.append(k, val);
+            }
+        } else {
+            h.append(k, HeaderValue::from_static(v));
+        }
+    }
+}
+
+/// `'sha256-…'` sources for every inline `<script>` (no `src`) in an HTML document.
+pub fn inline_script_hashes(html: &[u8]) -> Vec<String> {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let s = String::from_utf8_lossy(html);
+    let mut out = vec![];
+    let mut rest = &s[..];
+    while let Some(open) = rest.find("<script") {
+        let after = &rest[open..];
+        let Some(tag_end) = after.find('>') else { break };
+        let tag = &after[..tag_end];
+        let body = &after[tag_end + 1..];
+        let Some(close) = body.find("</script>") else { break };
+        if !tag.contains("src=") {
+            let digest = Sha256::digest(body[..close].as_bytes());
+            out.push(format!("'sha256-{}'", base64::engine::general_purpose::STANDARD.encode(digest)));
+        }
+        rest = &body[close..];
+    }
+    out
+}
+
 /// Server-level headers nginx appends (`add_header ... always`) to proxied
 /// `/api` and `/socket.io` responses, for every status.
 pub fn apply_server_headers(_status: StatusCode, h: &mut HeaderMap) {
@@ -254,6 +300,8 @@ fn serve_blocking(root: &Path, method: &Method, headers: &HeaderMap, uri_path: &
     } else {
         raw
     };
+    let document_hashes =
+        if matches!(location_for(&served_path), Location::IndexHtml) { inline_script_hashes(&raw) } else { vec![] };
     let (body_bytes, gzipped, plain_len) = if found.gz_only {
         if client_gzip {
             let plain_len = gz_plain_len(&raw);
@@ -287,6 +335,7 @@ fn serve_blocking(root: &Path, method: &Method, headers: &HeaderMap, uri_path: &
     let now = SystemTime::now();
     match location {
         Location::IndexHtml => {
+            apply_document_headers(h, &document_hashes);
             h.insert(header::EXPIRES, HeaderValue::from_str(&http_date(now - std::time::Duration::from_secs(1))).unwrap());
             h.append(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
             h.append(
@@ -470,3 +519,24 @@ fn parse_ranges(v: &str, len: u64) -> RangeResult {
     }
     if out.is_empty() { RangeResult::Unsatisfiable } else { RangeResult::Ranges(out) }
 }
+
+#[cfg(test)]
+mod document_header_tests {
+    use super::*;
+
+    #[test]
+    fn hashes_only_inline_scripts() {
+        let html = b"<head><script src=\"/a.js\"></script><script type=\"module\" src=\"/b.js\"></script></head><body><script>\n  x();\n</script></body>";
+        // sha256("\n  x();\n")
+        use base64::Engine;
+        use sha2::{Digest, Sha256};
+        let want = format!("'sha256-{}'", base64::engine::general_purpose::STANDARD.encode(Sha256::digest(b"\n  x();\n")));
+        assert_eq!(inline_script_hashes(html), vec![want.clone()]);
+        let mut h = HeaderMap::new();
+        apply_document_headers(&mut h, &inline_script_hashes(html));
+        let csp = h.get("content-security-policy").unwrap().to_str().unwrap();
+        assert!(csp.contains(&format!("script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' {want};")), "{csp}");
+        assert_eq!(h.get("x-frame-options").unwrap(), "DENY");
+    }
+}
+

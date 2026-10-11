@@ -145,6 +145,10 @@ def cookie_shape(v):
 
 
 IGNORED_HEADERS = set()
+# Deliberate deviation (PARITY.md, upstream GHSA-r343-6gfx-3pcp): upstream's nginx drops its
+# server-level security headers on the HTML shell; excalidash-rs sends them there.
+DOCUMENT_SECURITY_HEADERS = {"x-frame-options", "x-content-type-options", "referrer-policy",
+                             "permissions-policy", "content-security-policy"}
 ALL_NAMES = set()  # Rust does not impersonate nginx's Server header (documented deviation)
 
 
@@ -224,8 +228,17 @@ class Runner:
             problems.append(f"status {a.status} != {b.status}")
         ha, hb = header_map(a, self.t['node'].base), header_map(b, self.t['rust'].base)
         # Exact header-name spellings (case-sensitive), as a multiset.
+        html_doc = (b.header("content-type") or "").startswith("text/html")
+        doc_extra = set()
+        if html_doc:
+            doc_extra = {k for k in DOCUMENT_SECURITY_HEADERS if k in hb and k not in ha}
+            missing = DOCUMENT_SECURITY_HEADERS - set(hb)
+            if missing and b.status == 200:
+                problems.append(f"HTML document lacks security headers: {sorted(missing)}")
+            for k in doc_extra:
+                hb.pop(k)
         na = sorted(k for k, _ in a.headers if k.lower() not in IGNORED_HEADERS)
-        nb = sorted(k for k, _ in b.headers if k.lower() not in IGNORED_HEADERS)
+        nb = sorted(k for k, _ in b.headers if k.lower() not in IGNORED_HEADERS and k.lower() not in doc_extra)
         if na != nb:
             problems.append(f"header-name spelling: node {sorted(set(na) - set(nb))} rust {sorted(set(nb) - set(na))}")
         ALL_NAMES.update(k for k, _ in a.headers)
