@@ -1,0 +1,28 @@
+# Overlay: run both diff stacks on PostgreSQL (one throwaway server each).
+# RUST_IMAGE must be built with --build-arg FEATURES=postgres.
+x-pg: &pg
+  image: postgres:17-alpine
+  environment:
+    POSTGRES_USER: excalidash
+    POSTGRES_PASSWORD: diff-postgres-password
+    POSTGRES_DB: excalidash
+  tmpfs: [/var/lib/postgresql/data]
+  healthcheck:
+    test: ["CMD", "pg_isready", "-U", "excalidash"]
+    interval: 1s
+    retries: 60
+services:
+  node-pg: *pg
+  rust-pg: *pg
+  node-backend:
+    environment:
+      DATABASE_PROVIDER: postgresql
+      DATABASE_URL: postgresql://excalidash:diff-postgres-password@node-pg:5432/excalidash
+    depends_on:
+      node-pg: {condition: service_healthy}
+  rust:
+    environment:
+      DATABASE_PROVIDER: postgresql
+      DATABASE_URL: postgresql://excalidash:diff-postgres-password@rust-pg:5432/excalidash
+    depends_on:
+      rust-pg: {condition: service_healthy}

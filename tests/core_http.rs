@@ -91,3 +91,25 @@ fn express_options_reply_and_case_insensitive_paths() {
     assert_eq!(r.status, 200, "{}", r.text());
     assert!(r.json().get("authEnabled").is_some());
 }
+
+/// The WebSocket upgrade must keep `Connection: Upgrade` (browsers reject anything else).
+#[test]
+fn websocket_upgrade_handshake_is_untouched() {
+    use std::io::{Read, Write};
+    let s = TestServer::start(&[("AUTH_MODE", "disabled")]);
+    let mut tcp = std::net::TcpStream::connect(("127.0.0.1", s.port)).unwrap();
+    tcp.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+    tcp.write_all(
+        b"GET /socket.io/?EIO=4&transport=websocket HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    )
+    .unwrap();
+    let mut buf = vec![0u8; 2048];
+    let n = tcp.read(&mut buf).unwrap();
+    let head = String::from_utf8_lossy(&buf[..n]);
+    let head = head.split("\r\n\r\n").next().unwrap();
+    assert!(head.starts_with("HTTP/1.1 101 Switching Protocols\r\n"), "{head}");
+    assert!(head.contains("\r\nConnection: Upgrade") || head.contains("\r\nConnection: upgrade"), "{head}");
+    assert!(head.contains("\r\nUpgrade: websocket"), "{head}");
+    assert!(head.contains("\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="), "{head}");
+    assert!(!head.to_ascii_lowercase().contains("keep-alive"), "{head}");
+}

@@ -545,9 +545,10 @@ async fn maybe_gzip(r: Response<AxumBody>, accepts: bool) -> Response<AxumBody> 
 
 /// Header-name spellings as Express/helmet/cors/nginx/engine.io emit them.
 pub fn canonical_header_name(name: &str, socket: bool) -> String {
-    const EXACT: [&str; 12] = [
+    const EXACT: [&str; 13] = [
         "X-Request-ID", "ETag", "X-DNS-Prefetch-Control", "X-XSS-Protection", "RateLimit-Policy", "RateLimit-Limit",
         "RateLimit-Remaining", "RateLimit-Reset", "WWW-Authenticate", "Content-MD5", "X-Cache", "Origin-Agent-Cluster",
+        "Sec-WebSocket-Accept",
     ];
     if socket && name == "cache-control" {
         return name.to_string(); // engine.io sets it lowercase
@@ -620,6 +621,14 @@ pub async fn outer_layer(bundled: bool, req: Request<AxumBody>, next: axum::midd
         next.run(req).await
     };
     let status = r.status();
+    if status == StatusCode::SWITCHING_PROTOCOLS {
+        // WebSocket handshake (ws writes it raw: Upgrade, Connection, Sec-WebSocket-Accept).
+        if bundled {
+            r.headers_mut().insert(header::SERVER, HeaderValue::from_static(static_files::NGINX_SERVER));
+        }
+        apply_header_case(&mut r, true);
+        return r;
+    }
     let h = r.headers_mut();
     if polling && status == StatusCode::OK && !h.contains_key(header::CACHE_CONTROL) {
         // engine.io polling responses

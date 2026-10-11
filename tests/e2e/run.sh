@@ -7,6 +7,8 @@
 # only exist in that dev build, so the production bundle can't run the suite.
 #   BASELINE=1   same suite against the upstream Node 0.6.5 backend
 #   BUNDLE=1     production bundle served by the Rust image itself (smoke mode)
+#   PG=1         backend on a throwaway PostgreSQL (RUST_IMAGE needs the postgres feature).
+#                Anonymous suite only: upstream's auth global-setup seeds via the SQLite client.
 set -euo pipefail
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 upstream="$repo/upstream-ref/excalidash"
@@ -28,22 +30,38 @@ common_env=(-e NODE_ENV=development -e CSRF_MAX_REQUESTS=100000 -e RATE_LIMIT_MA
             -e CSRF_SECRET=e2e-csrf-secret -e JWT_SECRET=e2e-jwt-secret-that-is-long-enough-for-tests
             -e UPDATE_CHECK_OUTBOUND=false -e S3_BUCKET=)
 
-stop_all() { docker rm -f exrs-e2e-backend exrs-e2e-vite >/dev/null 2>&1 || true; }
+stop_all() {
+  docker rm -f exrs-e2e-backend exrs-e2e-vite exrs-e2e-pg >/dev/null 2>&1 || true
+  docker network rm exrs-e2e-net >/dev/null 2>&1 || true
+}
+
+db_env=()
+start_pg() {
+  docker network create exrs-e2e-net >/dev/null
+  docker run -d --name exrs-e2e-pg --network exrs-e2e-net --tmpfs /var/lib/postgresql/data \
+    -e POSTGRES_USER=excalidash -e POSTGRES_PASSWORD=e2e-postgres-password -e POSTGRES_DB=excalidash \
+    postgres:17-alpine >/dev/null
+  for _ in $(seq 1 60); do docker exec exrs-e2e-pg pg_isready -U excalidash >/dev/null 2>&1 && break; sleep 1; done
+  sleep 1
+  db_env=(--network exrs-e2e-net -e DATABASE_PROVIDER=postgresql
+          -e DATABASE_URL=postgresql://excalidash:e2e-postgres-password@exrs-e2e-pg:5432/excalidash)
+}
 
 start_backend() { # $1 auth mode, $2 data dir, $3 db file
   stop_all
   local fe_url="http://127.0.0.1:$fe_port" port_map="127.0.0.1:$be_port:8080" extra=(-e FRONTEND_DIST_DIR=none)
   if [ "${BUNDLE:-}" = 1 ]; then port_map="127.0.0.1:$fe_port:8080"; extra=(); fi
+  db_env=(); [ "${PG:-}" = 1 ] && start_pg
   if [ "${BASELINE:-}" = 1 ]; then
     docker run -d --name exrs-e2e-backend --init --user "$(id -u):$(id -g)" -p "127.0.0.1:$be_port:8000" \
       --tmpfs /app/uploads:mode=1777 "${common_env[@]}" -e AUTH_MODE="$1" -e FRONTEND_URL="$fe_url" \
-      -e DATABASE_PROVIDER=sqlite -e DATABASE_URL="file:/app/prisma/$3" -v "$2:/app/prisma" \
+      -e DATABASE_PROVIDER=sqlite -e DATABASE_URL="file:/app/prisma/$3" -v "$2:/app/prisma" "${db_env[@]}" \
       zimengxiong/excalidash-backend:0.6.5 >/dev/null
   else
     docker run -d --name exrs-e2e-backend --user "$(id -u):$(id -g)" -p "$port_map" \
       --tmpfs /app/uploads:mode=1777 --tmpfs /app/backups:mode=1777 "${common_env[@]}" "${extra[@]}" \
       -e AUTH_MODE="$1" -e FRONTEND_URL="$fe_url" -e DATABASE_URL="file:/app/prisma/$3" -v "$2:/app/prisma" \
-      "$image" >/dev/null
+      "${db_env[@]}" "$image" >/dev/null
   fi
   local health="http://127.0.0.1:$be_port/health"; [ "${BUNDLE:-}" = 1 ] && health="http://127.0.0.1:$fe_port/api/health"
   for _ in $(seq 1 120); do curl -sf -o /dev/null "$health" && break; sleep 1; done
@@ -59,6 +77,7 @@ run_suite() { # $1 anonymous|authenticated
   local auth=false data tag="$1" api="http://127.0.0.1:$be_port"
   [ "${BASELINE:-}" = 1 ] && tag="$1-baseline"
   [ "${BUNDLE:-}" = 1 ] && { tag="$1-bundle"; api="http://127.0.0.1:$fe_port/api"; }
+  [ "${PG:-}" = 1 ] && tag="$tag-pg"
   [ "$1" = authenticated ] && auth=true
   if [ "$auth" = true ]; then
     data="$upstream/backend/prisma"; rm -f "$data"/auth-e2e.db*; start_backend local "$data" auth-e2e.db
@@ -80,6 +99,7 @@ run_suite() { # $1 anonymous|authenticated
 status=0
 case "$mode" in
   anonymous|authenticated) run_suite "$mode" "$@" || status=$? ;;
-  all) run_suite anonymous "$@" || status=$?; run_suite authenticated "$@" || status=$? ;;
+  all) run_suite anonymous "$@" || status=$?
+       [ "${PG:-}" = 1 ] || { run_suite authenticated "$@" || status=$?; } ;;
 esac
 exit $status

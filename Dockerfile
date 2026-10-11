@@ -5,6 +5,8 @@ ARG FRONTEND_IMAGE=zimengxiong/excalidash-frontend:0.6.5
 
 # --- build: static musl binary -------------------------------------------------
 FROM rust:1-alpine AS build
+# Optional cargo features, e.g. --build-arg FEATURES=postgres for PostgreSQL support.
+ARG FEATURES=""
 RUN apk add --no-cache musl-dev
 WORKDIR /src
 # Dependency layer (cached until Cargo.toml/Cargo.lock change).
@@ -12,9 +14,9 @@ COPY Cargo.toml Cargo.lock build.rs VERSION ./
 COPY prisma ./prisma
 COPY vendor ./vendor
 RUN mkdir src && echo 'fn main(){}' > src/main.rs && echo '' > src/lib.rs \
-    && cargo build --release --locked && rm -rf src target/release/.fingerprint/excalidash*
+    && cargo build --release --locked --features "$FEATURES" && rm -rf src target/release/.fingerprint/excalidash*
 COPY src ./src
-RUN cargo build --release --locked && cp target/release/excalidash-rs /excalidash-rs
+RUN cargo build --release --locked --features "$FEATURES" && cp target/release/excalidash-rs /excalidash-rs
 
 # --- frontend: unmodified upstream build, compressible assets stored as .gz -----
 FROM ${FRONTEND_IMAGE} AS frontend-src
