@@ -1,6 +1,6 @@
 //! Upstream Express route table (generated from ExcaliDash 0.6.5 `backend/src`).
 //! Used for Express's case-insensitive path matching and its automatic OPTIONS reply.
-//! Regenerate when porting a new upstream release (see UPGRADING.md).
+//! Regenerate when porting a new upstream release: tools/gen_express_routes.py (see UPGRADING.md).
 pub static ROUTES: &[(&str, &str)] = &[
     ("POST", "/auth/admins"), // auth/adminUserRoutes.ts
     ("GET", "/auth/api-keys"), // auth/accountApiKeyRoutes.ts

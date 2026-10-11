@@ -19,6 +19,7 @@ Triage the diff into buckets:
 | Upstream path | Rust counterpart |
 |---|---|
 | `backend/prisma/migrations/sqlite/*` | copy new folders into `prisma/migrations/` (embedded at build time, applied with Prisma-identical bookkeeping) |
+| `backend/prisma/migrations/postgresql/*` | copy new folders into `prisma/migrations-postgresql/`; new BOOLEAN or TIMESTAMP(3) columns go into `BOOL_COLUMNS` / `TIMESTAMP_COLUMNS` in `src/sql/pg.rs` (literal 0/1 and ms translation) |
 | `backend/prisma/schema.prisma` | `prisma/schema.prisma` (reference) + affected row structs/queries |
 | `backend/src/config/**`, `config.ts` | `src/config.rs` |
 | `backend/src/index.ts`, `server/csrf.ts`, `middleware/**`, `security.ts` | `src/http/**`, `src/security.rs` |
@@ -35,7 +36,12 @@ Triage the diff into buckets:
 
 ## 2. Port
 
-- Follow `docs/PORTING.md` (Prisma date/bool encoding, `updatedAt`, Express quirks).
+- Follow `docs/PORTING.md` (Prisma date/bool encoding, `updatedAt`, Express quirks). Write SQL
+  in the SQLite dialect with `?N` placeholders through `crate::sql`; it runs unchanged on
+  PostgreSQL (see `src/sql/pg.rs` for what the translator handles).
+- New, removed or renamed routes: regenerate the Express route table (case-insensitive
+  matching + automatic `OPTIONS`):
+  `python3 -I tools/gen_express_routes.py upstream-ref/excalidash > src/http/express_routes.rs`.
 - New migration: copy the folder, then `cargo test` — the migration runner test applies all
   migrations on an empty DB, and `tests/diff` checks the schema against Prisma's.
 - Bump `VERSION` and the frontend pin `FRONTEND_IMAGE` in `Dockerfile` (and `tests/diff/compose.yaml`,
@@ -49,9 +55,25 @@ cargo test                                   # unit + black-box integration test
 docker build -t excalidash-rs:dev .
 tests/diff/run.sh                            # Node vs Rust differential scenario (bump image tags inside)
 tests/e2e/run.sh all                         # upstream Playwright suite against the Rust image
+
+# PostgreSQL (throwaway server on a loopback port)
+docker run -d --name exrs-pg -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=test --tmpfs /var/lib/postgresql/data \
+  postgres:17-alpine -c max_connections=500
+EXCALIDASH_TEST_PG=postgresql://postgres:test@127.0.0.1:55432 cargo test --features postgres
+docker build --build-arg FEATURES=postgres -t excalidash-rs:dev-pg .
+DIFF_DB=postgres RUST_IMAGE=excalidash-rs:dev-pg tests/diff/run.sh
+PG=1 RUST_IMAGE=excalidash-rs:dev-pg tests/e2e/run.sh anonymous
+docker rm -f exrs-pg
 tests/realdata/run.sh                        # copy of the live DB: Rust → upstream round trip
 tests/footprint/run.sh                       # RAM/image size vs targets
 ```
+
+## Vendored hyper
+
+`vendor/hyper` carries two small patches (exact header-name spellings, `Content-Length: 0` on
+204). When bumping hyper in `Cargo.lock`, replace the vendored copy with the new version and
+re-apply the patches marked `excalidash-rs patch` (see `vendor/README.md`); `tests/diff`
+compares header names case-sensitively and fails if they are lost.
 
 ## 4. Release
 

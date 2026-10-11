@@ -96,6 +96,7 @@ Status legend: ✅ ported + tested · ⚠️ ported with a documented deviation 
 | Drawings list cache (LRU, TTL, per-user invalidation) | server/drawingsCache.ts | src/drawings_cache.rs | ✅ | dashboard_drawings::drawings_cache_keys_are_user_scoped |
 | Audit log | utils/audit.ts | src/audit.rs | ✅ | tests/diff (ENABLE_AUDIT_LOGGING=true) |
 | Prisma migrations (`migrate deploy` bookkeeping, checksums) | prisma + docker-entrypoint.sh | src/db.rs, src/main.rs | ✅ | schema identical to Prisma's (see Verification) |
+| PostgreSQL (`DATABASE_PROVIDER=postgresql`, `postgres` cargo feature): upstream's PostgreSQL migrations with Prisma's `_prisma_migrations` table and advisory lock, Prisma URL arguments (`schema`, `connection_limit`, `connect_timeout`, `sslmode`, `sslaccept`, `sslcert`, `host`, `application_name`, `options`), same queries via a dialect shim | prisma/migrations/postgresql, docker-entrypoint.sh | src/sql/ (mod.rs shim, pg.rs), src/db.rs | ✅ | whole cargo suite against PostgreSQL 17 (`EXCALIDASH_TEST_PG`), tests/diff and e2e (anonymous) against upstream Node on PostgreSQL, sql::pg::tests |
 | Persisted JWT/CSRF secrets, migration lock, RUN_MIGRATIONS | docker-entrypoint.sh | src/main.rs (`EXCALIDASH_ENTRYPOINT=1`) | ✅ | |
 | Static frontend serving (SPA fallback, per-location headers, caching, gzip + Vary, ETag/Last-Modified/304, asset 404, directory 301/403, 405, `Server`) | frontend/nginx.conf.template | src/http/static_files.rs | ✅ | tests/diff (11 static steps: SPA index/deep link/index.html, favicon, asset gzip/identity/304, missing asset, directory redirect/forbidden, POST) |
 | Bootstrap setup code | auth/bootstrapSetupCode.ts | src/bootstrap.rs | ✅ | auth_core, auth_core_upstream::auth_onboarding_decision_flow |
@@ -129,17 +130,23 @@ bodies and key order, cookies, routing quirks, static-file semantics, sanitiser 
 validation issues in dev mode, date parsing — is verified identical against upstream
 (see Verification in README.md). What remains:
 
-**Out of scope**
-- **PostgreSQL** (optional in the brief): the build is SQLite-only; `DATABASE_PROVIDER=postgresql`
-  or a non-`file:` `DATABASE_URL` stops startup with a clear error.
+Header names are sent with upstream's exact spellings (e.g. `X-Request-ID`, `ETag`,
+`RateLimit-Policy`, lowercase `cache-control` on engine.io) and 204 preflights carry
+`Content-Length: 0` like Express — both through the vendored hyper patches in `vendor/`.
+
+**PostgreSQL (matches upstream on PostgreSQL, differs from SQLite by design)**
+- Search (`contains`) is a case-sensitive `LIKE` on PostgreSQL, case-insensitive on SQLite,
+  without wildcard escaping on either — same as Prisma.
+- The PostgreSQL baseline migration seeds no `bootstrap-admin` row (the SQLite history does).
+- Scheduled backups log `[backup] Scheduled backups currently support SQLite file: DATABASE_URL
+  values only.` on each run; SQLite auto-vacuum/reclaim and PRAGMAs are skipped.
+- Prisma engine knobs without an equivalent are ignored: `pool_timeout`, `socket_timeout`,
+  `pgbouncer`, `statement_cache_size`, and client certificates (`sslidentity`/`sslpassword`).
+- Not in the default image: build with `--build-arg FEATURES=postgres` (+0.6 MB binary).
 
 **Not observable by clients (protocol level)**
-- Header-name letter case: hyper writes lowercase names and keeps its case-preservation API
-  crate-private. Names are case-insensitive (RFC 9110 §5.1), and on the live path Cloudflare
-  serves browsers over HTTP/2/3, where names are lowercase by definition (RFC 9113 §8.2.1),
-  so browsers receive identical bytes either way.
-- 204 responses carry no `Content-Length: 0` (Express/cors add it; RFC 9110 §8.6 forbids it,
-  hyper strips it).
+- The WebSocket `101` handshake also carries a `Date` header (Node's `ws` writes only
+  `Upgrade`, `Connection`, `Sec-WebSocket-Accept`).
 
 **Implementation choices with identical responses**
 - JS/CSS ship pre-gzipped in the image and are inflated on the fly for clients without gzip;
@@ -169,6 +176,7 @@ validation issues in dev mode, date parsing — is verified identical against up
 | axum + hyper + tokio (current-thread runtime) | HTTP server; one worker thread, blocking pool for SQLite/bcrypt/scrypt |
 | socketioxide | Socket.IO v5 protocol compatible with the unmodified `socket.io-client` |
 | rusqlite (bundled SQLite) + r2d2 | Prisma-compatible SQLite access; 4-connection pool, 1 MiB page cache each |
+| postgres + tokio-postgres-rustls (`postgres` feature only) | PostgreSQL client with rustls TLS; not compiled into the default image |
 | reqwest + rustls (ring) + webpki-roots | outbound HTTPS (OIDC, Resend, GitHub, S3) without OpenSSL or system certs (scratch image) |
 | lettre (rustls) | SMTP password-reset delivery (nodemailer equivalent) |
 | rusty-s3 | S3 request signing without the AWS SDK |

@@ -13,7 +13,7 @@ host port mapping, tunnel, DNS and Access app stay exactly as they are.
 ## 0. Preconditions
 
 - All verification gates green on the image tag being deployed (`README.md` → Verification).
-- Build and tag the image locally on BMAX: `docker build -t excalidash-rs:ef587f1 ~/code/excalidash-rs`
+- Build and tag the image locally on BMAX: `docker build -t excalidash-rs:6a0d6f4 ~/code/excalidash-rs`
   (no registry needed; the tag pins the exact build).
 
 ## 1. Backup (before touching anything)
@@ -38,10 +38,10 @@ Replace `docker/excalidash/compose.yaml` with (keeping the same volume names, se
 
 ```yaml
 # ExcaliDash at https://excali.robin.build (runbook: docs/operations/excalidash.md).
-# Rust backend + bundled upstream 0.6.5 frontend in one container (~5 MB RAM idle).
+# Rust backend + bundled upstream 0.6.5 frontend in one container (~10 MB RAM idle).
 services:
   app:
-    image: excalidash-rs:ef587f1
+    image: excalidash-rs:6a0d6f4
     restart: unless-stopped
     environment:
       DATABASE_URL: file:/app/prisma/dev.db
@@ -86,7 +86,7 @@ volume ownership is already correct.
 - Open https://excali.robin.build: existing session still logged in (same JWT secret), drawings
   list, open a drawing, edit, reload, history panel, image renders.
 - Two tabs on one drawing: live cursors/edits appear (Socket.IO).
-- `docker stats --no-stream` → app ≈ 5–15 MB.
+- `docker stats --no-stream` → app ≈ 3–15 MB.
 - Next morning: `docker run --rm -v excalidash_backups:/b alpine ls -la /b` shows the 04:00 backup.
 
 ## 4. Rollback (any time, ~1 minute)
