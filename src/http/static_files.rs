@@ -161,11 +161,13 @@ pub async fn serve(root: PathBuf, req: Request<Body>) -> Response<Body> {
         .unwrap_or_else(|_| simple(StatusCode::INTERNAL_SERVER_ERROR))
 }
 
+/// nginx's built-in error page.
 fn simple(status: StatusCode) -> Response<Body> {
     let body = format!(
-        "<html>\r\n<head><title>{0} {1}</title></head>\r\n<body>\r\n<center><h1>{0} {1}</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n",
+        "<html>\r\n<head><title>{0} {1}</title></head>\r\n<body>\r\n<center><h1>{0} {1}</h1></center>\r\n<hr><center>{2}</center>\r\n</body>\r\n</html>\r\n",
         status.as_u16(),
-        status.canonical_reason().unwrap_or("")
+        status.canonical_reason().unwrap_or(""),
+        NGINX_SERVER
     );
     let mut r = Response::new(Body::from(body));
     *r.status_mut() = status;
@@ -180,12 +182,46 @@ fn serve_blocking(root: &Path, method: &Method, headers: &HeaderMap, uri_path: &
         apply_server_headers(StatusCode::OK, r.headers_mut()); // location / inherits server headers
         return r;
     }
-    // try_files $uri $uri/ /index.html
-    let (served_path, found) = match find_file(root, uri_path) {
-        Some(f) => (uri_path.to_string(), f),
-        None => match find_file(root, "/index.html") {
-            Some(f) => ("/index.html".to_string(), f),
-            None => return simple(StatusCode::NOT_FOUND),
+    let request_location = location_for(uri_path);
+    let (served_path, found) = match request_location {
+        // `location ~* \.(js|css|...)$` has no try_files: a missing file is nginx's 404.
+        Location::Asset => match find_file(root, uri_path) {
+            Some(f) => (uri_path.to_string(), f),
+            None => {
+                let mut r = simple(StatusCode::NOT_FOUND);
+                r.headers_mut().insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+                return r;
+            }
+        },
+        // try_files $uri $uri/ /index.html
+        _ => match find_file(root, uri_path) {
+            Some(f) => (uri_path.to_string(), f),
+            None => {
+                if let Some(dir) = safe_join(root, uri_path).filter(|p| p.is_dir() && uri_path != "/") {
+                    let mut r = if !uri_path.ends_with('/') {
+                        // Directory without trailing slash: 301 to the slash form.
+                        let mut r = simple(StatusCode::MOVED_PERMANENTLY);
+                        let host = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("localhost");
+                        if let Ok(v) = HeaderValue::from_str(&format!("http://{host}{uri_path}/")) {
+                            r.headers_mut().insert(header::LOCATION, v);
+                        }
+                        r
+                    } else if dir.join("index.html").is_file() {
+                        return serve_blocking(root, method, headers, &format!("{uri_path}index.html"));
+                    } else {
+                        // No index file and autoindex off.
+                        let mut r = simple(StatusCode::FORBIDDEN);
+                        r.headers_mut().insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+                        r
+                    };
+                    apply_server_headers(r.status(), r.headers_mut());
+                    return r;
+                }
+                match find_file(root, "/index.html") {
+                    Some(f) => ("/index.html".to_string(), f),
+                    None => return simple(StatusCode::NOT_FOUND),
+                }
+            }
         },
     };
     let location = location_for(&served_path);
@@ -303,7 +339,14 @@ fn serve_blocking(root: &Path, method: &Method, headers: &HeaderMap, uri_path: &
     if !gzipped {
         builder.headers_mut().unwrap().insert(header::CONTENT_LENGTH, HeaderValue::from(body_bytes.len()));
     }
-    let body = if method == Method::HEAD { Body::empty() } else { Body::from(body_bytes) };
+    let body = if method == Method::HEAD {
+        Body::empty()
+    } else if gzipped {
+        // nginx's gzip filter streams the compressed body (chunked, no Content-Length).
+        Body::from_stream(futures_util::stream::iter([Ok::<_, std::io::Error>(bytes::Bytes::from(body_bytes))]))
+    } else {
+        Body::from(body_bytes)
+    };
     builder.body(body).unwrap()
 }
 

@@ -4,6 +4,7 @@ pub mod body;
 pub mod csrf;
 pub mod ctx;
 pub mod error;
+pub mod express_routes;
 pub mod rate_limit;
 pub mod static_files;
 
@@ -270,8 +271,13 @@ pub async fn handle_backend(st: AppState, router: Router, mut req: Request<AxumB
         return finish(&ctx, r);
     }
 
+    // Express routes match case-insensitively; registered-before-the-gate routes
+    // (/csrf-token, /health, /auth/*) are recognised by their canonical spelling.
+    let trimmed = if path.len() > 1 && path.ends_with('/') { path.trim_end_matches('/') } else { path.as_str() };
+    let canonical = express_canonical_path(trimmed).unwrap_or_else(|| trimmed.to_string());
+
     // GET /csrf-token
-    if (method == Method::GET || method == Method::HEAD) && ctx.path == "/csrf-token" {
+    if (method == Method::GET || method == Method::HEAD) && canonical == "/csrf-token" {
         let mut r = csrf::issue_token(&ctx);
         merge_base(r.headers_mut(), base);
         return finish(&ctx, r);
@@ -283,7 +289,7 @@ pub async fn handle_backend(st: AppState, router: Router, mut req: Request<AxumB
     }
 
     // Onboarding gate (applies after /auth and /health are registered).
-    if onboarding_gate_enabled() && !gate_bypass(&ctx.path) {
+    if onboarding_gate_enabled() && !gate_bypass(&canonical) {
         match onboarding_required(&st).await {
             Ok(true) => {
                 let mut r = json_response(
@@ -305,7 +311,21 @@ pub async fn handle_backend(st: AppState, router: Router, mut req: Request<AxumB
     }
 
     // Route. Express (non-strict routing) ignores one trailing slash.
-    let routed_path = if path.len() > 1 && path.ends_with('/') { path.trim_end_matches('/').to_string() } else { path.clone() };
+    let mut routed_path = if path.len() > 1 && path.ends_with('/') { path.trim_end_matches('/').to_string() } else { path.clone() };
+    // Express's automatic OPTIONS reply (reached when cors did not answer the preflight).
+    if method == Method::OPTIONS {
+        if let Some(allow) = express_allow(&routed_path) {
+            let mut r = Response::new(AxumBody::from(allow.clone()));
+            set(r.headers_mut(), "allow", &allow);
+            set(r.headers_mut(), "content-type", "text/plain");
+            merge_base(r.headers_mut(), base);
+            return r;
+        }
+    }
+    // Express matches literal path segments case-insensitively (parameters keep their case).
+    if let Some(canonical) = express_canonical_path(&routed_path) {
+        routed_path = canonical;
+    }
     let uri: Uri = match &query {
         Some(q) => format!("{routed_path}?{q}"),
         None => routed_path,
@@ -571,4 +591,76 @@ pub async fn outer_layer(bundled: bool, req: Request<AxumBody>, next: axum::midd
         }
     }
     r
+}
+
+// ---------------------------------------------------------------------------
+// Express routing semantics on top of axum's (case-sensitive) router.
+
+fn template_matches(template: &str, path: &str, case_sensitive: bool) -> bool {
+    let t: Vec<&str> = template.split('/').collect();
+    let p: Vec<&str> = path.split('/').collect();
+    t.len() == p.len()
+        && t.iter().zip(&p).all(|(ts, ps)| {
+            if ts.starts_with(':') {
+                !ps.is_empty()
+            } else if case_sensitive {
+                ts == ps
+            } else {
+                ts.eq_ignore_ascii_case(ps)
+            }
+        })
+}
+
+/// The `Allow` value Express computes for OPTIONS (sorted, HEAD implied by GET).
+pub fn express_allow(path: &str) -> Option<String> {
+    let mut methods: Vec<&str> = express_routes::ROUTES
+        .iter()
+        .filter(|(_, t)| template_matches(t, path, false))
+        .flat_map(|(m, _)| if *m == "GET" { vec!["GET", "HEAD"] } else { vec![*m] })
+        .collect();
+    if methods.is_empty() {
+        return None;
+    }
+    methods.sort_unstable();
+    methods.dedup();
+    Some(methods.join(", "))
+}
+
+/// When no route matches exactly but one matches ignoring case, rewrite the literal
+/// segments to the registered spelling (parameter values are kept as sent).
+pub fn express_canonical_path(path: &str) -> Option<String> {
+    if express_routes::ROUTES.iter().any(|(_, t)| template_matches(t, path, true)) {
+        return None;
+    }
+    let (_, template) = express_routes::ROUTES.iter().find(|(_, t)| template_matches(t, path, false))?;
+    let out: Vec<String> = template
+        .split('/')
+        .zip(path.split('/'))
+        .map(|(t, p)| if t.starts_with(':') { p.to_string() } else { t.to_string() })
+        .collect();
+    Some(out.join("/"))
+}
+
+#[cfg(test)]
+mod express_routing_tests {
+    use super::*;
+
+    #[test]
+    fn allow_and_case_folding_match_upstream() {
+        // Values captured from upstream 0.6.5 (OPTIONS with a disallowed Origin).
+        assert_eq!(express_allow("/drawings").as_deref(), Some("GET, HEAD, POST"));
+        assert_eq!(express_allow("/drawings/abc").as_deref(), Some("DELETE, GET, HEAD, PUT"));
+        assert_eq!(express_allow("/drawings/shared").as_deref(), Some("DELETE, GET, HEAD, PUT"));
+        assert_eq!(express_allow("/Drawings/ABC").as_deref(), Some("DELETE, GET, HEAD, PUT"));
+        assert_eq!(express_allow("/drawings/a/history/b/restore").as_deref(), Some("POST"));
+        assert_eq!(express_allow("/collections/x/shares/y").as_deref(), Some("DELETE, PATCH"));
+        assert_eq!(express_allow("/auth/users").as_deref(), Some("GET, HEAD, POST"));
+        assert_eq!(express_allow("/auth/USERS/abc").as_deref(), Some("PATCH"));
+        assert_eq!(express_allow("/library").as_deref(), Some("GET, HEAD, PUT"));
+        assert_eq!(express_allow("/health").as_deref(), Some("GET, HEAD"));
+        assert_eq!(express_allow("/nope"), None);
+        assert_eq!(express_canonical_path("/DRAWINGS/AbC/HISTORY").as_deref(), Some("/drawings/AbC/history"));
+        assert_eq!(express_canonical_path("/Auth/Status").as_deref(), Some("/auth/status"));
+        assert_eq!(express_canonical_path("/drawings/AbC"), None);
+    }
 }

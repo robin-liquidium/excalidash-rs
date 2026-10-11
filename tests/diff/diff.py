@@ -441,11 +441,27 @@ def scenario(R):
     s("system update", "GET", "/api/system/update")
     s("unknown route", "GET", "/api/nope")
     s("unknown auth route", "GET", "/api/auth/nope")
+    s("options disallowed origin", "OPTIONS", lambda v: f"/api/drawings/{v['d1']}", headers={"Origin": "https://evil.example"}, origin=False)
+    s("options unknown route", "OPTIONS", "/api/nope", headers={"Origin": "https://evil.example"}, origin=False)
+    s("case-insensitive list", "GET", "/api/Drawings")
+    s("case-insensitive read", "GET", lambda v: f"/api/DRAWINGS/{v['d1']}/HISTORY")
+    s("case-insensitive auth", "GET", "/api/Auth/Status")
     s("socket.io handshake", "GET", "/socket.io/?EIO=4&transport=polling", compare_body=False)
     s("socket.io preflight", "OPTIONS", "/socket.io/?EIO=4&transport=polling", compare_body=False,
       headers={"Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"})
     s("spa index", "GET", "/", compare_body=False)
     s("spa deep link", "GET", "/drawing/abc", compare_body=False)
+    s("spa index.html", "GET", "/index.html", compare_body=False)
+    s("favicon", "GET", "/favicon.svg", compare_body=False)
+    s("missing asset is nginx 404", "GET", "/assets/does-not-exist.js")
+    s("directory redirect", "GET", "/assets", compare_body=False)
+    s("directory listing forbidden", "GET", "/assets/")
+    s("post to static", "POST", "/favicon.svg", compare_body=False)
+    rs = s("static asset", "GET", "/", compare_body=False)
+    asset = {n: re.search(rb'/assets/[^"]+\.js', r.body).group().decode() for n, r in rs.items()}
+    s("static js asset gzip", "GET", lambda v: asset["node"], headers={"Accept-Encoding": "gzip"}, compare_body=False)
+    s("static js asset identity", "GET", lambda v: asset["node"], compare_body=False)
+    s("static asset 304", "GET", lambda v: asset["node"], headers={"If-Modified-Since": "Sat, 03 Oct 2026 20:23:00 GMT"}, compare_body=False)
 
 
 def norm_entry(name):

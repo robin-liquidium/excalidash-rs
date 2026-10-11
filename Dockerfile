@@ -19,7 +19,8 @@ RUN cargo build --release --locked && cp target/release/excalidash-rs /excalidas
 FROM ${FRONTEND_IMAGE} AS frontend-src
 FROM alpine:3 AS frontend
 COPY --from=frontend-src /usr/share/nginx/html /public
-RUN find /public -type f \( -name '*.js' -o -name '*.css' \) -exec gzip -9 -n {} \; \
+# Keep the original mtimes so Last-Modified/ETag match nginx's (gzip resets them).
+RUN find /public -type f \( -name '*.js' -o -name '*.css' \) -exec sh -c 'gzip -9 -n -k "$1" && touch -r "$1" "$1.gz" && rm "$1"' _ {} \; \
     && mkdir -p /skel/app/prisma /skel/app/backups /skel/app/uploads
 
 # --- runtime ------------------------------------------------------------------------

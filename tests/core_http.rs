@@ -69,3 +69,25 @@ fn preflight_and_disallowed_origin() {
     assert!(r.header("access-control-allow-origin").is_none());
     assert!(r.header("vary").is_none());
 }
+
+/// Express routing semantics: automatic OPTIONS reply and case-insensitive literal segments.
+#[test]
+fn express_options_reply_and_case_insensitive_paths() {
+    let s = TestServer::start(&[("DISABLE_ONBOARDING_GATE", "true")]);
+    let evil = TestClient { origin: Some("https://evil.example".into()), ..s.client() };
+    let r = evil.send("OPTIONS", "/drawings/abc", None);
+    assert_eq!(r.status, 200);
+    assert_eq!(r.header("allow").as_deref(), Some("DELETE, GET, HEAD, PUT"));
+    assert_eq!(r.header("content-type").as_deref(), Some("text/plain"));
+    assert_eq!(r.text(), "DELETE, GET, HEAD, PUT");
+    assert!(r.header("etag").is_none());
+    let r = evil.send("OPTIONS", "/nope", None);
+    assert_eq!(r.status, 404);
+    assert!(r.text().contains("Cannot OPTIONS /nope"));
+    let c = s.client();
+    assert_eq!(c.get("/HEALTH").status, 200);
+    assert_eq!(c.get("/Csrf-Token").status, 200);
+    let r = c.get("/Auth/Status");
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert!(r.json().get("authEnabled").is_some());
+}
