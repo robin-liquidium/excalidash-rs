@@ -37,7 +37,7 @@ struct SocketStateInner {
 }
 
 #[derive(Clone, Default)]
-struct SocketState(Arc<Mutex<SocketStateInner>>);
+struct SocketState(Arc<Mutex<SocketStateInner>>, Arc<tokio::sync::Mutex<()>>);
 
 fn room_users() -> &'static Mutex<HashMap<String, Vec<PresenceUser>>> {
     static M: OnceLock<Mutex<HashMap<String, Vec<PresenceUser>>>> = OnceLock::new();
@@ -225,6 +225,9 @@ async fn on_connect(s: SocketRef, io: SocketIo) {
     {
         let (state, io) = (state.clone(), io.clone());
         s.on("join-room", async move |s: SocketRef, TryData(data): TryData<Value>, ack: AckSender| {
+            // Process this socket's events in arrival order (Node handles them on one event loop).
+            let order = state.1.clone();
+            let _in_order = order.lock().await;
             let data = data.unwrap_or(Value::Null);
             let Some(drawing_id) = data.get("drawingId").and_then(|v| v.as_str()).map(str::to_string) else {
                 // Upstream would query with an undefined id → no access.
@@ -301,6 +304,9 @@ async fn on_connect(s: SocketRef, io: SocketIo) {
     {
         let (state, io) = (state.clone(), io.clone());
         s.on("cursor-move", async move |s: SocketRef, TryData(data): TryData<Value>| {
+            // Process this socket's events in arrival order (Node handles them on one event loop).
+            let order = state.1.clone();
+            let _in_order = order.lock().await;
             let Ok(Value::Object(mut data)) = data else {
                 return;
             };
@@ -327,6 +333,9 @@ async fn on_connect(s: SocketRef, io: SocketIo) {
     {
         let (state, io) = (state.clone(), io.clone());
         s.on("element-update", async move |s: SocketRef, TryData(data): TryData<Value>| {
+            // Process this socket's events in arrival order (Node handles them on one event loop).
+            let order = state.1.clone();
+            let _in_order = order.lock().await;
             let Ok(data) = data else { return };
             let Some(drawing_id) = data.get("drawingId").and_then(|v| v.as_str()).map(str::to_string) else { return };
             if !has_access_entry(&state, &drawing_id) {
@@ -361,6 +370,9 @@ async fn on_connect(s: SocketRef, io: SocketIo) {
     {
         let (state, io) = (state.clone(), io.clone());
         s.on("user-activity", async move |s: SocketRef, TryData(data): TryData<Value>| {
+            // Process this socket's events in arrival order (Node handles them on one event loop).
+            let order = state.1.clone();
+            let _in_order = order.lock().await;
             let data = data.unwrap_or(Value::Null);
             let Some(drawing_id) = data.get("drawingId").and_then(|v| v.as_str()).map(str::to_string) else { return };
             if !has_access_entry(&state, &drawing_id) {
@@ -396,6 +408,8 @@ async fn on_connect(s: SocketRef, io: SocketIo) {
     {
         let (state, io) = (state.clone(), io.clone());
         s.on_disconnect(async move |s: SocketRef| {
+            let order = state.1.clone();
+            let _in_order = order.lock().await;
             let rooms: Vec<String> = state.0.lock().unwrap().joined_rooms.iter().cloned().collect();
             for (room, users) in remove_socket_from_rooms(&rooms, &s.id.to_string()) {
                 emit_presence(&io, &room, &users);
