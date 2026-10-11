@@ -81,7 +81,8 @@ Status legend: ✅ ported + tested · ⚠️ ported with a documented deviation 
 
 | Feature | Upstream | Rust | Status | Tests |
 |---|---|---|---|---|
-| Request id, helmet headers, CORS (incl. preflight), body parsers + limits, request log, general rate limit, ETag/304, finalhandler 404 | index.ts, helmet, cors, express | src/http/mod.rs, src/http/body.rs, src/http/rate_limit.rs | ✅ | core_http::* |
+| Request id, helmet headers, CORS (incl. preflight), body parsers + limits, request log, general rate limit, ETag/304, finalhandler 404 | index.ts, helmet, cors, express | src/http/mod.rs, src/http/body.rs, src/http/rate_limit.rs | ✅ | core_http::*, tests/diff |
+| Express routing semantics: case-insensitive literal segments, trailing slash, automatic `OPTIONS` reply (`Allow`, sorted) | express / router 2 | src/http/mod.rs, src/http/express_routes.rs (generated from upstream) | ✅ | core_http::express_options_reply_and_case_insensitive_paths, http::express_routing_tests, tests/diff |
 | CSRF tokens (HMAC, cookie client id + legacy id), CSRF middleware | security.ts, server/csrf.ts, security/csrfClient.ts | src/http/csrf.rs | ✅ | core_http::csrf_required_for_mutations |
 | HTTPS redirect policy | server/httpsRedirectPolicy.ts | src/http/mod.rs | ⚠️ | auth_core_upstream::production_health_* |
 | Onboarding gate | index.ts | src/http/mod.rs | ✅ | core_http::onboarding_gate_blocks_app_routes_until_setup |
@@ -96,14 +97,14 @@ Status legend: ✅ ported + tested · ⚠️ ported with a documented deviation 
 | Audit log | utils/audit.ts | src/audit.rs | ✅ | tests/diff (ENABLE_AUDIT_LOGGING=true) |
 | Prisma migrations (`migrate deploy` bookkeeping, checksums) | prisma + docker-entrypoint.sh | src/db.rs, src/main.rs | ✅ | schema identical to Prisma's (see Verification) |
 | Persisted JWT/CSRF secrets, migration lock, RUN_MIGRATIONS | docker-entrypoint.sh | src/main.rs (`EXCALIDASH_ENTRYPOINT=1`) | ✅ | |
-| Static frontend serving (SPA fallback, nginx headers/caching/gzip) | frontend/nginx.conf.template | src/http/static_files.rs | ⚠️ | tests/diff (spa index, deep link, /api headers) |
+| Static frontend serving (SPA fallback, per-location headers, caching, gzip + Vary, ETag/Last-Modified/304, asset 404, directory 301/403, 405, `Server`) | frontend/nginx.conf.template | src/http/static_files.rs | ⚠️ | tests/diff (11 static steps: SPA index/deep link/index.html, favicon, asset gzip/identity/304, missing asset, directory redirect/forbidden, POST) |
 | Bootstrap setup code | auth/bootstrapSetupCode.ts | src/bootstrap.rs | ✅ | auth_core, auth_core_upstream::auth_onboarding_decision_flow |
 | Login rate limiter (SystemConfig-driven), account-action limiter | auth.ts | src/auth/routes/helpers.rs | ✅ | auth_core_upstream::login_rate_limit_*, auth_admin |
 | OIDC (openid-client v5 semantics: discovery, PKCE, ID token checks, JWKS, JIT, groups→role) | auth/oidc*.ts | src/auth/routes/oidc.rs, src/auth/oidc_client.rs | ⚠️ | auth_oidc, auth_oidc_secret_file |
-| Password-reset mail (SMTP via lettre, Resend via HTTPS) | mail/*, config/mail.ts | src/mail.rs | ✅ | auth_account_mail |
+| Password-reset mail (SMTP via lettre, Resend via HTTPS) | mail/*, config/mail.ts | src/mail.rs | ✅ | auth_account_mail; image-level: SMTP mail received, link confirmed, login with new password |
 | Image interning, DrawingFile store (db + S3), S3 client | fileProcessing.ts, drawingFileStore.ts, s3.ts | src/files.rs, src/s3.rs | ⚠️ | files_store, files_s3, files::tests |
 | Scene update (versioned tx, snapshots, file merge, element-update broadcast) | routes/dashboard/sceneUpdate.ts | src/routes/dashboard/scene.rs | ✅ | dashboard_scene |
-| Scheduled SQLite backups (cron 5/6 fields, retention) | backups/scheduler.ts | src/backups.rs | ✅ | ops_backups_maintenance, backups::tests |
+| Scheduled SQLite backups (cron 5/6 fields, retention) | backups/scheduler.ts | src/backups.rs | ✅ | ops_backups_maintenance, backups::tests; image-level: backups written on schedule, 0600/uid 1001, integrity_check ok |
 | SQLite incremental auto-vacuum + reclaim | db/sqliteMaintenance.ts | src/sqlite_maintenance.rs | ✅ | ops_backups_maintenance, sqlite_maintenance::tests |
 | Storage doctor startup box | server/storageDoctor.ts | src/storage_doctor.rs | ✅ | storage_doctor::tests |
 | Legacy SQLite import integrity worker | workers/db-verify.js | src/routes/import_export/legacy_sqlite_import.rs | ✅ | import_export_compat |
@@ -139,16 +140,13 @@ Everything below was checked against upstream; none is visible to the shipped fr
   hyper strips it).
 - HTTPS redirect URLs keep the `/api` prefix; upstream's backend sees the stripped path and
   redirects to `/<path>` without it (an upstream bug behind nginx).
-- Express routing quirks not reproduced: case-insensitive paths, and Express's automatic
-  `OPTIONS` 200 + `Allow` response for requests from a *disallowed* origin (allowed origins get
-  the same 204 preflight as upstream).
 
 **Static frontend (nginx emulation)**
 - JS/CSS are stored pre-gzipped in the image (`*.gz` only) and sent compressed to gzip clients
   or inflated on the fly for others; nginx compresses on the fly. Same `Content-Encoding`,
   `Vary`, weak ETag.
-- Directory paths without `index.html` fall through to the SPA (nginx would answer 403).
-  Range requests support a single range.
+- Range requests support a single range (nginx also serves multipart ranges; browsers never
+  request those for these assets).
 
 **Behavioural details**
 - Sanitisation uses ammonia (html5ever) instead of DOMPurify (jsdom) with the same allow/forbid
