@@ -62,6 +62,8 @@ the logs: `docker compose logs app | grep 'BOOTSTRAP SETUP'`.
   `TRUST_PROXY`, OIDC, S3, mail and backups. See [PARITY.md](PARITY.md) for the few Rust-only
   ones (e.g. `FRONTEND_DIST_DIR=none` for API-only mode).
 - Healthcheck built in: `/app/excalidash-rs healthcheck`.
+- Optional: `EXCALIDASH_THEME_FOLLOW_SYSTEM=true` makes the UI follow your OS light/dark mode
+  (Rust-only; see [PARITY.md](PARITY.md)).
 
 ### Already running ExcaliDash?
 

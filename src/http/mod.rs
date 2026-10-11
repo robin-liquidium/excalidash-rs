@@ -7,6 +7,7 @@ pub mod error;
 pub mod express_routes;
 pub mod rate_limit;
 pub mod static_files;
+pub mod theme;
 
 use axum::{
     body::Body as AxumBody,
@@ -452,6 +453,13 @@ pub async fn dispatch(fd: Frontdoor, req: Request<AxumBody>) -> Response<AxumBod
         return handle_backend(fd.st, fd.backend, req, peer).await;
     };
     let path = req.uri().path().to_string();
+    if cfg.theme_follow_system && path == theme::SCRIPT_PATH {
+        let mut r = Response::new(AxumBody::from(theme::SCRIPT));
+        let h = r.headers_mut();
+        h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/javascript; charset=utf-8"));
+        h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+        return r;
+    }
     if path == "/api" || path.starts_with("/api/") {
         // nginx `location /api/ { proxy_pass http://backend/; }` strips the prefix.
         let stripped = path.strip_prefix("/api").unwrap_or("");

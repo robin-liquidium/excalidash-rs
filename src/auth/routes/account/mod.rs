@@ -242,6 +242,14 @@ fn parse_stored_preferences(raw: Option<&str>) -> Map<String, Value> {
     serde_json::from_str::<Value>(raw).ok().and_then(|v| parse_preferences(&v).ok()).unwrap_or_default()
 }
 
+/// `EXCALIDASH_THEME_FOLLOW_SYSTEM`: answer with the OS theme (see http::theme).
+fn system_theme(preferences: Map<String, Value>, ctx: &Ctx) -> Map<String, Value> {
+    if !crate::config::config().theme_follow_system {
+        return preferences;
+    }
+    crate::http::theme::override_preferences(preferences, ctx.cookie(crate::http::theme::COOKIE))
+}
+
 async fn load_preferences(st: &AppState, user_id: &str) -> Result<Option<Option<String>>, ApiError> {
     let uid = user_id.to_string();
     Ok(st
@@ -260,7 +268,8 @@ async fn get_preferences(State(st): State<AppState>, ctx: Ctx) -> Response {
             let Some(stored) = load_preferences(&st, &user.id).await? else {
                 return Err(ApiError::not_found("User not found"));
             };
-            ok(json!({ "preferences": parse_stored_preferences(stored.as_deref()) }))
+            let preferences = parse_stored_preferences(stored.as_deref());
+            ok(json!({ "preferences": system_theme(preferences, &ctx) }))
         }
         .await;
         catch(r, "Get preferences error:", "Failed to load preferences")
@@ -303,7 +312,7 @@ async fn put_preferences(State(st): State<AppState>, ctx: Ctx, body: Body) -> Re
             let mut details = Map::new();
             details.insert("fields".into(), Value::Array(fields));
             audit(&st, &ctx, &user.id, "preferences_updated", None, Some(details)).await;
-            ok(json!({ "preferences": preferences }))
+            ok(json!({ "preferences": system_theme(preferences, &ctx) }))
         }
         .await;
         catch(r, "Update preferences error:", "Failed to save preferences")

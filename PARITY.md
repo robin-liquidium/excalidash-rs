@@ -160,6 +160,11 @@ Header names are sent with upstream's exact spellings (e.g. `X-Request-ID`, `ETa
 - A legacy-import BLOB scene column is read as `{}`.
 
 **Rust-only environment variables**
+- `EXCALIDASH_THEME_FOLLOW_SYSTEM=true` (default off): the bundled frontend follows the OS
+  light/dark setting. `index.html` gets one extra script (OS theme → cookie + the app's
+  localStorage preference mirror) and `GET/PUT /auth/preferences` answer with that theme.
+  Theme changes apply live on non-editor pages and on the next load in an open editor; a manual
+  toggle lasts until the next load. Upstream frontend files stay unmodified.
 - `FRONTEND_DIST_DIR` (default `/app/public` when present; `none` = backend-only mode),
   `EXCALIDASH_ENTRYPOINT=1` (docker-entrypoint duties: persisted secrets, migration lock),
   `EXCALIDASH_BACKEND_ROOT` (upstream's `backendRoot`), `EXCALIDASH_BLOCKING_THREADS`

@@ -249,6 +249,11 @@ fn serve_blocking(root: &Path, method: &Method, headers: &HeaderMap, uri_path: &
         Ok(b) => b,
         Err(_) => return simple(StatusCode::NOT_FOUND),
     };
+    let raw = if served_path == "/index.html" && !found.gz_only && crate::config::config().theme_follow_system {
+        super::theme::inject(&raw)
+    } else {
+        raw
+    };
     let (body_bytes, gzipped, plain_len) = if found.gz_only {
         if client_gzip {
             let plain_len = gz_plain_len(&raw);

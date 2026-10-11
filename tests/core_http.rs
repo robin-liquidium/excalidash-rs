@@ -113,3 +113,37 @@ fn websocket_upgrade_handshake_is_untouched() {
     assert!(head.contains("\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="), "{head}");
     assert!(!head.to_ascii_lowercase().contains("keep-alive"), "{head}");
 }
+
+/// Rust-only EXCALIDASH_THEME_FOLLOW_SYSTEM: index.html gets the theme script, the script is
+/// served, and GET/PUT /auth/preferences answer with the OS theme cookie. Off by default.
+#[test]
+fn theme_follow_system_injects_script_and_overrides_preference() {
+    let dist = tempfile::tempdir().unwrap();
+    std::fs::write(dist.path().join("index.html"), "<!doctype html>\n<html><head><title>x</title></head><body></body></html>\n").unwrap();
+    let dir = dist.path().to_str().unwrap();
+
+    let off = TestServer::start(&[("FRONTEND_DIST_DIR", dir)]);
+    let page = off.client().get("/").text();
+    assert!(!page.contains("excalidash-rs-theme.js"), "{page}");
+    assert_eq!(off.client().get("/excalidash-rs-theme.js").status, 404, "nginx asset 404 when off");
+
+    let on = TestServer::start(&[("FRONTEND_DIST_DIR", dir), ("EXCALIDASH_THEME_FOLLOW_SYSTEM", "true")]);
+    let r = on.client().get("/");
+    assert!(r.text().contains("<head>\n    <script src=\"/excalidash-rs-theme.js\"></script><title>"), "{}", r.text());
+    let s = on.client().get("/editor/abc");
+    assert!(s.text().contains("excalidash-rs-theme.js"), "SPA fallback is injected too");
+    let js = on.client().get("/excalidash-rs-theme.js");
+    assert_eq!(js.status, 200);
+    assert_eq!(js.header("content-type").as_deref(), Some("application/javascript; charset=utf-8"));
+    assert!(js.text().contains("prefers-color-scheme: dark"));
+
+    // The preference override does not depend on the bundled frontend.
+    let api = TestServer::start(&[("EXCALIDASH_THEME_FOLLOW_SYSTEM", "true")]);
+    let (mut c, _) = user_session(&api, "theme@example.test", "USER");
+    let r = c.put("/auth/preferences", json!({"theme": "light", "language": "de"}));
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(c.get("/auth/preferences").json()["preferences"], json!({"theme": "light", "language": "de"}));
+    let cookie = c.extra.get("cookie").unwrap().to_str().unwrap().to_string();
+    c.extra.insert("cookie", format!("{cookie}; excalidash-system-theme=dark").parse().unwrap());
+    assert_eq!(c.get("/auth/preferences").json()["preferences"], json!({"theme": "dark", "language": "de"}));
+}

@@ -188,6 +188,9 @@ pub struct Config {
     pub mail: MailConfig,
     /// Rust-only: directory holding the built frontend (served when present).
     pub frontend_dist_dir: Option<PathBuf>,
+    /// Rust-only (`EXCALIDASH_THEME_FOLLOW_SYSTEM`): the bundled frontend follows the OS
+    /// light/dark setting instead of the stored theme preference.
+    pub theme_follow_system: bool,
     pub uploads_dir: PathBuf,
 }
 
@@ -710,6 +713,7 @@ impl Config {
 
         let cfg = Config {
             uploads_dir: backend_root.join("uploads"),
+            theme_follow_system: env.boolean("EXCALIDASH_THEME_FOLLOW_SYSTEM", false),
             backend_root,
             port: port as u16,
             listen_host: env.string("BACKEND_HOST", "0.0.0.0"),
