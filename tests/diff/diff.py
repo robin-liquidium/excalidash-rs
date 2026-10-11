@@ -153,6 +153,8 @@ def header_map(resp, base):
         k = k.lower()
         if k in IGNORED_HEADERS:
             continue
+        if resp.status == 204 and k == "content-length":
+            continue  # RFC 9110 forbids Content-Length on 204; hyper omits it (documented deviation)
         if k == "access-control-allow-origin" and v == base:
             v = "<own-origin>"
         if k == "location":
@@ -439,6 +441,9 @@ def scenario(R):
     s("system update", "GET", "/api/system/update")
     s("unknown route", "GET", "/api/nope")
     s("unknown auth route", "GET", "/api/auth/nope")
+    s("socket.io handshake", "GET", "/socket.io/?EIO=4&transport=polling", compare_body=False)
+    s("socket.io preflight", "OPTIONS", "/socket.io/?EIO=4&transport=polling", compare_body=False,
+      headers={"Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"})
     s("spa index", "GET", "/", compare_body=False)
     s("spa deep link", "GET", "/drawing/abc", compare_body=False)
 

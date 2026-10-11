@@ -192,16 +192,13 @@ async fn async_main() {
 
     let backend = excalidash_rs::routes::router(st.clone());
     let fd = Frontdoor { st: st.clone(), backend };
-    let mut app = Router::new()
+    let bundled = cfg.frontend_dist_dir.is_some();
+    let app = Router::new()
         .fallback(move |req: Request| http::dispatch(fd.clone(), req))
-        .layer(io_layer);
-    if cfg.frontend_dist_dir.is_some() {
-        // Everything is served "by nginx" in bundled mode (static files, /api, /socket.io).
-        app = app.layer(axum::middleware::map_response(|mut r: axum::response::Response| async move {
-            r.headers_mut().insert("server", axum::http::HeaderValue::from_static(http::static_files::NGINX_SERVER));
-            r
+        .layer(io_layer)
+        .layer(axum::middleware::from_fn(move |req: Request, next: axum::middleware::Next| {
+            http::outer_layer(bundled, req, next)
         }));
-    }
 
     // configureSqlite + security settings, then background jobs.
     excalidash_rs::security::configure_max_data_url_size(cfg.file_upload_max_bytes as u64);

@@ -517,3 +517,58 @@ async fn maybe_gzip(r: Response<AxumBody>, accepts: bool) -> Response<AxumBody> 
     }
     Response::from_parts(parts, AxumBody::from(gz))
 }
+
+// ---------------------------------------------------------------------------
+// Outermost layer (also wraps Socket.IO): socket.io's `cors` option for the
+// engine endpoints, nginx's server-level headers on /socket.io, and nginx's
+// `Server` header on everything in bundled mode.
+
+pub async fn outer_layer(bundled: bool, req: Request<AxumBody>, next: axum::middleware::Next) -> Response<AxumBody> {
+    let is_socket = req.uri().path().starts_with("/socket.io");
+    let origin = req.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok()).map(str::to_string);
+    let cors_ok = is_socket && config().is_allowed_origin(origin.as_deref());
+    let accepts_gzip = static_files::accepts_gzip(req.headers());
+    let polling = is_socket && req.uri().query().map(|q| q.contains("transport=polling")).unwrap_or(false);
+    let mut r = if is_socket && cors_ok && req.method() == Method::OPTIONS {
+        // engine.io + cors: preflight answered with 204.
+        let mut r = Response::new(AxumBody::empty());
+        *r.status_mut() = StatusCode::NO_CONTENT;
+        let h = r.headers_mut();
+        set(h, "access-control-allow-methods", "GET,HEAD,PUT,PATCH,POST,DELETE");
+        if let Some(req_headers) = req.headers().get("access-control-request-headers") {
+            h.insert("access-control-allow-headers", req_headers.clone());
+            // cors builds one combined Vary value.
+            h.insert(header::VARY, HeaderValue::from_static("Origin, Access-Control-Request-Headers"));
+        }
+        set(h, "content-length", "0");
+        r
+    } else {
+        next.run(req).await
+    };
+    let status = r.status();
+    let h = r.headers_mut();
+    if polling && status == StatusCode::OK && !h.contains_key(header::CACHE_CONTROL) {
+        // engine.io polling responses
+        set(h, "cache-control", "no-store");
+    }
+    if cors_ok {
+        if let Some(o) = &origin {
+            set(h, "access-control-allow-origin", o);
+        }
+        if !h.get_all(header::VARY).iter().any(|v| v.to_str().map(|s| s.contains("Origin")).unwrap_or(false)) {
+            h.append(header::VARY, HeaderValue::from_static("Origin"));
+        }
+        set(h, "access-control-allow-credentials", "true");
+    }
+    if bundled {
+        if is_socket {
+            static_files::apply_server_headers(status, h);
+        }
+        h.insert(header::SERVER, HeaderValue::from_static(static_files::NGINX_SERVER));
+        if is_socket {
+            // nginx gzip on the proxied engine.io text/plain responses.
+            return maybe_gzip(r, accepts_gzip).await;
+        }
+    }
+    r
+}
