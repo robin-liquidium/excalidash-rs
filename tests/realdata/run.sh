@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# Real-data verification on COPIES of the live ExcaliDash volume (never the original):
-#  1. copy excalidash_data (read-only mount) into throwaway volume A
+# Real-data verification on COPIES of a live ExcaliDash data volume (never the original):
+#  1. copy $SOURCE_VOLUME (default excalidash_data, read-only mount) into throwaway volume A
 #  2. seed with upstream Node 0.6.5 on A: an image (DrawingFile bytes), history snapshots of
 #     the existing real drawing, an API key and a library item, so files/history/keys exist
 #  3. clone A into B; run upstream Node on A and the Rust image on B (live secrets)
 #  4. read every account/drawing/collection/snapshot/file/API-key view through both and diff
 #  5. write through Rust on B, then start upstream Node on B (switch-back check)
-# Secrets come from agent-secrets and are never printed.
+# Needs the instance's secrets and URL in the environment (never printed):
+#   JWT_SECRET, CSRF_SECRET, API_KEY_HASH_PEPPER, FRONTEND_URL (e.g. https://draw.example.com)
 set -euo pipefail
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 image="${RUST_IMAGE:-excalidash-rs:dev}"
+source_volume="${SOURCE_VOLUME:-excalidash_data}"
+: "${JWT_SECRET:?}" "${CSRF_SECRET:?}" "${API_KEY_HASH_PEPPER:?}" "${FRONTEND_URL:?}"
+export JWT_SECRET CSRF_SECRET API_KEY_HASH_PEPPER FRONTEND_URL
 work="$(mktemp -d)"
 vols=(exrs-real-a exrs-real-b)
 cleanup() {
@@ -22,17 +26,12 @@ docker rm -f exrs-real-node exrs-real-rust exrs-real-node-b exrs-real-seed >/dev
 docker volume rm "${vols[@]}" >/dev/null 2>&1 || true
 
 docker volume create exrs-real-a >/dev/null
-docker run --rm -v excalidash_data:/src:ro -v exrs-real-a:/dst alpine sh -c 'cp -a /src/. /dst/'
+docker run --rm -v "$source_volume":/src:ro -v exrs-real-a:/dst alpine sh -c 'cp -a /src/. /dst/'
 
-"$HOME/.local/bin/secrets" run \
-  --env EXCALIDASH_JWT_SECRET=tools/excalidash/jwt-secret \
-  --env EXCALIDASH_CSRF_SECRET=tools/excalidash/csrf-secret \
-  --env EXCALIDASH_API_KEY_HASH_PEPPER=tools/excalidash/api-key-hash-pepper \
-  -- bash -s "$image" "$work" "$here" <<'INNER'
+bash -s "$image" "$work" "$here" <<'INNER'
 set -euo pipefail
 image="$1"; work="$2"; here="$3"
-export JWT_SECRET="$EXCALIDASH_JWT_SECRET" CSRF_SECRET="$EXCALIDASH_CSRF_SECRET" API_KEY_HASH_PEPPER="$EXCALIDASH_API_KEY_HASH_PEPPER"
-common=(-e NODE_ENV=production -e AUTH_MODE=local -e TRUST_PROXY=1 -e FRONTEND_URL=https://excali.robin.build
+common=(-e NODE_ENV=production -e AUTH_MODE=local -e TRUST_PROXY=1 -e FRONTEND_URL
         -e UPDATE_CHECK_OUTBOUND=false -e JWT_SECRET -e CSRF_SECRET -e API_KEY_HASH_PEPPER
         -e RATE_LIMIT_MAX_REQUESTS=100000 -e CSRF_MAX_REQUESTS=100000)
 node_on() { # $1 name, $2 volume, $3 host port

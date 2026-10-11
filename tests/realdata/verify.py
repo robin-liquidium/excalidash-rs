@@ -31,7 +31,7 @@ def call(api, path, token, method="GET", body=None, csrf=None, cookie_extra="", 
         h["Authorization"] = f"Bearer {bearer}"
     else:
         h["Cookie"] = f"excalidash-access-token={token}{cookie_extra}"
-        h["Origin"] = "https://excali.robin.build"
+        h["Origin"] = os.environ["FRONTEND_URL"]
     data = None
     if body is not None:
         data = json.dumps(body).encode()

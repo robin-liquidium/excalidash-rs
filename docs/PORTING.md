@@ -6,7 +6,7 @@ upstream frontend must not notice any difference, and an existing Prisma SQLite
 
 ## Source of truth
 
-- Upstream checkout (read-only, gitignored): `/home/robin/code/excalidash-rs/upstream-ref/excalidash`
+- Upstream checkout (read-only, gitignored): `upstream-ref/excalidash` (clone of github.com/ZimengXiong/ExcaliDash at `v0.6.5`)
   - backend: `backend/src/**` (port semantics from here), tests: `backend/src/__tests__/*`
   - schema: `backend/prisma/schema.prisma`, migrations vendored in `prisma/migrations`
 - Frontend build (for API usage reference only): `frontend/src/**` in the same checkout.

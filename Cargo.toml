@@ -2,6 +2,8 @@
 name = "excalidash-rs"
 version = "0.1.0"
 edition = "2024"
+license = "LGPL-3.0-only"
+description = "Drop-in Rust rewrite of the ExcaliDash backend: self-hosted Excalidraw in one tiny container"
 
 [dependencies]
 ammonia = "4.2.1"

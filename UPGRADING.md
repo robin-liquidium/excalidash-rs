@@ -77,5 +77,5 @@ compares header names case-sensitively and fails if they are lost.
 
 ## 4. Release
 
-Tag the commit, build the image, then follow `CUTOVER.md` (backup first, rollback = previous
+Tag the commit, build the image, then follow `MIGRATING.md` (backup first, rollback = previous
 image tag).
