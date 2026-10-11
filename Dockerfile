@@ -10,6 +10,7 @@ WORKDIR /src
 # Dependency layer (cached until Cargo.toml/Cargo.lock change).
 COPY Cargo.toml Cargo.lock build.rs VERSION ./
 COPY prisma ./prisma
+COPY vendor ./vendor
 RUN mkdir src && echo 'fn main(){}' > src/main.rs && echo '' > src/lib.rs \
     && cargo build --release --locked && rm -rf src target/release/.fingerprint/excalidash*
 COPY src ./src

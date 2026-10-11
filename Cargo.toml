@@ -59,3 +59,8 @@ reqwest = { version = "0.13.5", default-features = false, features = ["blocking"
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std"] }
 tempfile = "3.27.0"
 uuid = { version = "1", features = ["v4"] }
+
+# Vendored hyper with two small patches (see vendor/README.md): public HeaderCaseMap for
+# exact header-name spellings, and explicit `Content-Length: 0` kept on 204 responses.
+[patch.crates-io]
+hyper = { path = "vendor/hyper" }

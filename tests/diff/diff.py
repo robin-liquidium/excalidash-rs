@@ -144,7 +144,8 @@ def cookie_shape(v):
     return f"{name}{'(empty)' if empty else ''};" + ";".join(attrs)
 
 
-IGNORED_HEADERS = set()  # Rust does not impersonate nginx's Server header (documented deviation)
+IGNORED_HEADERS = set()
+ALL_NAMES = set()  # Rust does not impersonate nginx's Server header (documented deviation)
 
 
 def header_map(resp, base):
@@ -153,8 +154,6 @@ def header_map(resp, base):
         k = k.lower()
         if k in IGNORED_HEADERS:
             continue
-        if resp.status == 204 and k == "content-length":
-            continue  # RFC 9110 forbids Content-Length on 204; hyper omits it (documented deviation)
         if k == "access-control-allow-origin" and v == base:
             v = "<own-origin>"
         if k == "location":
@@ -224,6 +223,12 @@ class Runner:
         if a.status != b.status:
             problems.append(f"status {a.status} != {b.status}")
         ha, hb = header_map(a, self.t['node'].base), header_map(b, self.t['rust'].base)
+        # Exact header-name spellings (case-sensitive), as a multiset.
+        na = sorted(k for k, _ in a.headers if k.lower() not in IGNORED_HEADERS)
+        nb = sorted(k for k, _ in b.headers if k.lower() not in IGNORED_HEADERS)
+        if na != nb:
+            problems.append(f"header-name spelling: node {sorted(set(na) - set(nb))} rust {sorted(set(nb) - set(na))}")
+        ALL_NAMES.update(k for k, _ in a.headers)
         for k in sorted(ha.keys() | hb.keys()):
             if k not in hb:
                 problems.append(f"header missing in rust: {k}: {ha[k]}")
@@ -443,6 +448,8 @@ def scenario(R):
     s("system update", "GET", "/api/system/update")
     s("unknown route", "GET", "/api/nope")
     s("unknown auth route", "GET", "/api/auth/nope")
+    s("api preflight", "OPTIONS", "/api/drawings", compare_body=False,
+      headers={"Access-Control-Request-Method": "PUT", "Access-Control-Request-Headers": "content-type,x-csrf-token"})
     s("options disallowed origin", "OPTIONS", lambda v: f"/api/drawings/{v['d1']}", headers={"Origin": "https://evil.example"}, origin=False)
     s("options unknown route", "OPTIONS", "/api/nope", headers={"Origin": "https://evil.example"}, origin=False)
     s("case-insensitive list", "GET", "/api/Drawings")
@@ -486,6 +493,8 @@ def main():
     bad = [r for r in R.results if r["problems"]]
     order = [r for r in R.results if r["key_order"]]
     print(f"\n{total - len(bad)}/{total} steps identical; {len(bad)} with differences; {len(order)} with key-order-only notes")
+    if "--names" in sys.argv:
+        print("NODE HEADER NAMES:", json.dumps(sorted(ALL_NAMES)))
     if "--json" in sys.argv:
         with open(sys.argv[sys.argv.index("--json") + 1], "w") as f:
             json.dump(R.results, f, indent=1)

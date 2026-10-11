@@ -543,8 +543,62 @@ async fn maybe_gzip(r: Response<AxumBody>, accepts: bool) -> Response<AxumBody> 
 // engine endpoints, nginx's server-level headers on /socket.io, and nginx's
 // `Server` header on everything in bundled mode.
 
+/// Header-name spellings as Express/helmet/cors/nginx/engine.io emit them.
+pub fn canonical_header_name(name: &str, socket: bool) -> String {
+    const EXACT: [&str; 12] = [
+        "X-Request-ID", "ETag", "X-DNS-Prefetch-Control", "X-XSS-Protection", "RateLimit-Policy", "RateLimit-Limit",
+        "RateLimit-Remaining", "RateLimit-Reset", "WWW-Authenticate", "Content-MD5", "X-Cache", "Origin-Agent-Cluster",
+    ];
+    if socket && name == "cache-control" {
+        return name.to_string(); // engine.io sets it lowercase
+    }
+    if let Some(e) = EXACT.iter().find(|e| e.eq_ignore_ascii_case(name)) {
+        return e.to_string();
+    }
+    name.split('-')
+        .map(|part| {
+            let mut c = part.chars();
+            match c.next() {
+                Some(f) => f.to_ascii_uppercase().to_string() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn apply_header_case(r: &mut Response<AxumBody>, socket: bool) {
+    let mut map = hyper::ext::HeaderCaseMap::new();
+    let names: Vec<header::HeaderName> = r.headers().keys().cloned().collect();
+    for name in names {
+        let spelling = bytes::Bytes::from(canonical_header_name(name.as_str(), socket));
+        for _ in r.headers().get_all(&name).iter() {
+            map.push(name.clone(), spelling.clone());
+        }
+    }
+    // Headers hyper writes itself also take their spelling from the map.
+    for (name, spelling) in [
+        (header::DATE, "Date"),
+        (header::CONTENT_LENGTH, "Content-Length"),
+        (header::TRANSFER_ENCODING, "Transfer-Encoding"),
+        (header::CONNECTION, "Connection"),
+    ] {
+        if !r.headers().contains_key(&name) {
+            map.push(name, bytes::Bytes::from_static(spelling.as_bytes()));
+        }
+    }
+    r.extensions_mut().insert(map);
+}
+
 pub async fn outer_layer(bundled: bool, req: Request<AxumBody>, next: axum::middleware::Next) -> Response<AxumBody> {
     let is_socket = req.uri().path().starts_with("/socket.io");
+    let wants_close = req
+        .headers()
+        .get(header::CONNECTION)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_ascii_lowercase().contains("close"))
+        .unwrap_or(false)
+        || req.version() == axum::http::Version::HTTP_10;
     let origin = req.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok()).map(str::to_string);
     let cors_ok = is_socket && config().is_allowed_origin(origin.as_deref());
     let accepts_gzip = static_files::accepts_gzip(req.headers());
@@ -585,11 +639,21 @@ pub async fn outer_layer(bundled: bool, req: Request<AxumBody>, next: axum::midd
             static_files::apply_server_headers(status, h);
         }
         h.insert(header::SERVER, HeaderValue::from_static(static_files::NGINX_SERVER));
-        if is_socket {
-            // nginx gzip on the proxied engine.io text/plain responses.
-            return maybe_gzip(r, accepts_gzip).await;
+    }
+    if !wants_close {
+        // nginx and Node announce persistent connections explicitly.
+        h.insert(header::CONNECTION, HeaderValue::from_static("keep-alive"));
+        if !bundled {
+            h.insert("keep-alive", HeaderValue::from_static("timeout=5"));
         }
     }
+    let mut r = if bundled && is_socket {
+        // nginx gzip on the proxied engine.io text/plain responses.
+        maybe_gzip(r, accepts_gzip).await
+    } else {
+        r
+    };
+    apply_header_case(&mut r, is_socket);
     r
 }
 
