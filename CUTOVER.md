@@ -13,7 +13,7 @@ host port mapping, tunnel, DNS and Access app stay exactly as they are.
 ## 0. Preconditions
 
 - All verification gates green on the image tag being deployed (`README.md` → Verification).
-- Build and tag the image locally on BMAX: `docker build -t excalidash-rs:64bca37 ~/code/excalidash-rs`
+- Build and tag the image locally on BMAX: `docker build -t excalidash-rs:ef587f1 ~/code/excalidash-rs`
   (no registry needed; the tag pins the exact build).
 
 ## 1. Backup (before touching anything)
@@ -41,7 +41,7 @@ Replace `docker/excalidash/compose.yaml` with (keeping the same volume names, se
 # Rust backend + bundled upstream 0.6.5 frontend in one container (~5 MB RAM idle).
 services:
   app:
-    image: excalidash-rs:64bca37
+    image: excalidash-rs:ef587f1
     restart: unless-stopped
     environment:
       DATABASE_URL: file:/app/prisma/dev.db
