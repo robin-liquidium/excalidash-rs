@@ -1,6 +1,6 @@
 //! drawingHistoryRoutes.ts — snapshot list / read / restore.
 use axum::extract::{Path, State};
-use rusqlite::OptionalExtension;
+use crate::sql::OptionalExtension;
 use serde_json::{json, Value};
 
 use super::scene::{apply_scene_update, SceneError, SceneMutation, UpdateData, VersionGuard};
@@ -21,7 +21,7 @@ struct Snapshot {
     created_at: i64,
 }
 
-fn find_snapshot(c: &rusqlite::Connection, id: &str, drawing_id: &str) -> rusqlite::Result<Option<Snapshot>> {
+fn find_snapshot(c: &crate::sql::Connection, id: &str, drawing_id: &str) -> crate::sql::Result<Option<Snapshot>> {
     c.query_row(
         r#"SELECT "id","drawingId","version","elements","appState","files","createdAt" FROM "DrawingSnapshot" WHERE "id" = ?1 AND "drawingId" = ?2 LIMIT 1"#,
         [id, drawing_id],
@@ -93,7 +93,7 @@ pub async fn list_history(State(st): State<AppState>, ctx: Ctx, Path(id): Path<S
                 r#"SELECT "id","version","createdAt" FROM "DrawingSnapshot" WHERE "drawingId" = ?1 ORDER BY "createdAt" DESC LIMIT ?2 OFFSET ?3"#,
             )?;
             let rows: Vec<Value> = s
-                .query_map(rusqlite::params![id, limit, offset], |r| {
+                .query_map(crate::sql::params![id, limit, offset], |r| {
                     Ok(json!({
                         "id": r.get::<_, String>(0)?,
                         "version": r.get::<_, i64>(1)?,

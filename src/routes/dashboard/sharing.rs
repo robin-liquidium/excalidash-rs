@@ -1,6 +1,6 @@
 //! drawingSharingRoutes.ts + drawingSharedVisibilityRoutes.ts.
 use axum::extract::{Path, State};
-use rusqlite::OptionalExtension;
+use crate::sql::OptionalExtension;
 use serde_json::{json, Value};
 
 use super::{audit, drawing_owner, err_only, query};
@@ -48,7 +48,7 @@ pub async fn share_resolve(State(st): State<AppState>, ctx: Ctx, Path(id): Path<
                    AND ("email" LIKE ?2 OR "name" LIKE ?2 OR "username" LIKE ?2) LIMIT 10"#,
             )?;
             let rows: Vec<Value> = s
-                .query_map(rusqlite::params![uid, like], |r| {
+                .query_map(crate::sql::params![uid, like], |r| {
                     Ok(json!({"id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?, "email": r.get::<_, String>(2)?}))
                 })?
                 .collect::<Result<_, _>>()?;
@@ -61,7 +61,7 @@ pub async fn share_resolve(State(st): State<AppState>, ctx: Ctx, Path(id): Path<
 const PERMISSION_SELECT: &str = r#"SELECT p."id",p."granteeUserId",p."permission",p."createdAt",p."updatedAt",u."id",u."name",u."email"
     FROM "DrawingPermission" p JOIN "User" u ON u."id" = p."granteeUserId""#;
 
-fn permission_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+fn permission_json(r: &crate::sql::Row<'_>) -> crate::sql::Result<Value> {
     Ok(json!({
         "id": r.get::<_, String>(0)?,
         "granteeUserId": r.get::<_, String>(1)?,
@@ -133,7 +133,7 @@ pub async fn upsert_permission(State(st): State<AppState>, ctx: Ctx, Path(id): P
                 r#"INSERT INTO "DrawingPermission" ("id","drawingId","granteeUserId","permission","hidden","createdByUserId","createdAt","updatedAt")
                    VALUES (?1,?2,?3,?4,0,?5,?6,?6)
                    ON CONFLICT("drawingId","granteeUserId") DO UPDATE SET "permission" = excluded."permission", "createdByUserId" = excluded."createdByUserId", "updatedAt" = excluded."updatedAt""#,
-                rusqlite::params![crate::util::uuid_v4(), id2, g2, perm, me, now],
+                crate::sql::params![crate::util::uuid_v4(), id2, g2, perm, me, now],
             )?;
             Ok(Some(c.query_row(
                 &format!(r#"{PERMISSION_SELECT} WHERE p."drawingId" = ?1 AND p."granteeUserId" = ?2"#),
@@ -231,14 +231,14 @@ pub async fn create_link_share(State(st): State<AppState>, ctx: Ctx, Path(id): P
             let now = crate::util::now_ms();
             c.execute(
                 r#"UPDATE "DrawingLinkShare" SET "revokedAt" = ?1, "updatedAt" = ?1 WHERE "drawingId" = ?2 AND "revokedAt" IS NULL"#,
-                rusqlite::params![now, id2],
+                crate::sql::params![now, id2],
             )?;
             let share_id = crate::util::uuid_v4();
             let created_at = crate::util::now_ms();
             c.execute(
                 r#"INSERT INTO "DrawingLinkShare" ("id","drawingId","permission","tokenHash","passphraseHash","expiresAt","revokedAt","failedAttempts","lockedUntil","lastUsedAt","lastUsedIp","createdByUserId","createdAt","updatedAt")
                    VALUES (?1,?2,?3,?4,NULL,?5,NULL,0,NULL,NULL,NULL,?6,?7,?7)"#,
-                rusqlite::params![share_id, id2, perm, token_hash, expires_at, me, created_at],
+                crate::sql::params![share_id, id2, perm, token_hash, expires_at, me, created_at],
             )?;
             Ok(json!({
                 "id": share_id,
@@ -271,7 +271,7 @@ pub async fn revoke_link_share(State(st): State<AppState>, ctx: Ctx, Path((id, s
             let now = crate::util::now_ms();
             c.execute(
                 r#"UPDATE "DrawingLinkShare" SET "revokedAt" = ?1, "updatedAt" = ?1 WHERE "id" = ?2 AND "drawingId" = ?3 AND "revokedAt" IS NULL"#,
-                rusqlite::params![now, s2, id2],
+                crate::sql::params![now, s2, id2],
             )?;
             Ok(())
         })
@@ -301,7 +301,7 @@ pub async fn shared_visibility(State(st): State<AppState>, ctx: Ctx, Path(id): P
         .call(move |c| {
             Ok(c.execute(
                 r#"UPDATE "DrawingPermission" SET "hidden" = ?1, "updatedAt" = ?2 WHERE "drawingId" = ?3 AND "granteeUserId" = ?4"#,
-                rusqlite::params![hidden, crate::util::now_ms(), id, uid],
+                crate::sql::params![hidden, crate::util::now_ms(), id, uid],
             )?)
         })
         .await?;

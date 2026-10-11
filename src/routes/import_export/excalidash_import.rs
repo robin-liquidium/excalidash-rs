@@ -272,7 +272,7 @@ pub async fn resolve_final_ids(
                 let final_id = match id {
                     None => crate::util::uuid_v4(),
                     Some(id) => {
-                        use rusqlite::OptionalExtension;
+                        use crate::sql::OptionalExtension;
                         let owner: Option<String> =
                             c.query_row(r#"SELECT "userId" FROM "Drawing" WHERE "id" = ?1"#, [&id], |r| r.get(0)).optional()?;
                         match owner {

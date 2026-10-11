@@ -198,7 +198,10 @@ where
 
 /// enableIncrementalAutoVacuum(prisma, databaseUrl) as called from configureSqlite.
 pub async fn enable_incremental_auto_vacuum(st: &AppState) {
-    let r = st.db.call(|c| Ok(enable_incremental_auto_vacuum_on(c)?)).await;
+    if st.cfg.database_path.is_none() {
+        return;
+    }
+    let r = st.db.call(|c| Ok(enable_incremental_auto_vacuum_on(c.as_sqlite().expect("sqlite"))?)).await;
     if let Err(e) = r {
         eprintln!("[prisma] Failed to configure SQLite PRAGMAs: {e}");
     }
@@ -207,9 +210,9 @@ pub async fn enable_incremental_auto_vacuum(st: &AppState) {
 /// reclaimSqliteFreeSpace: return deleted pages to the filesystem, at most one run in flight.
 pub async fn reclaim_sqlite_free_space(st: &AppState) -> Option<SqliteReclaimResult> {
     let db = st.db.clone();
-    let path = st.cfg.database_path.clone();
+    let path = st.cfg.database_path.clone()?;
     single_flight(async move {
-        match db.call(move |c| Ok(reclaim_on(c, Some(&path))?)).await {
+        match db.call(move |c| Ok(reclaim_on(c.as_sqlite().expect("sqlite"), Some(&path))?)).await {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("[Cleanup] SQLite vacuum failed: {e}");

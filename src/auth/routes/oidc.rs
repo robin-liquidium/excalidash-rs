@@ -9,7 +9,7 @@ use axum::{
     Router,
 };
 use hmac::{Hmac, KeyInit, Mac};
-use rusqlite::OptionalExtension;
+use crate::sql::OptionalExtension;
 use serde_json::{json, Map, Value};
 use sha2::Sha256;
 
@@ -572,16 +572,16 @@ async fn run_callback(st: &AppState, ctx: &Ctx, flow: &FlowPayload, headers: &mu
             let linked: Option<(String, String)> = tx
                 .query_row(
                     r#"SELECT "id","userId" FROM "AuthIdentity" WHERE "issuer" = ?1 AND "subject" = ?2"#,
-                    rusqlite::params![tx_issuer, subject],
+                    crate::sql::params![tx_issuer, subject],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .optional()?;
             if let Some((identity_id, user_id)) = linked {
                 tx.execute(
                     r#"UPDATE "AuthIdentity" SET "lastLoginAt" = ?1, "emailAtLink" = ?2, "updatedAt" = ?1 WHERE "id" = ?3"#,
-                    rusqlite::params![now, tx_email, identity_id],
+                    crate::sql::params![now, tx_email, identity_id],
                 )?;
-                let user = User::find_by_id(tx, &user_id)?.ok_or_else(|| DbError::from(rusqlite::Error::QueryReturnedNoRows))?;
+                let user = User::find_by_id(tx, &user_id)?.ok_or_else(|| DbError::from(crate::sql::Error::QueryReturnedNoRows))?;
                 return Ok(TxOutcome::User(user));
             }
             let existing = User::find_by_email(tx, &tx_email)?;
@@ -602,16 +602,16 @@ async fn run_callback(st: &AppState, ctx: &Ctx, flow: &FlowPayload, headers: &mu
                     tx.execute(
                         r#"INSERT INTO "User" ("id","username","email","passwordHash","name","role","mustResetPassword","isActive","createdAt","updatedAt")
                            VALUES (?1, NULL, ?2, '', ?3, ?4, 0, 1, ?5, ?5)"#,
-                        rusqlite::params![id, tx_email, sanitized_name, role, now],
+                        crate::sql::params![id, tx_email, sanitized_name, role, now],
                     )?;
                     crate::trash::ensure_trash_collection(tx, &id)?;
-                    User::find_by_id(tx, &id)?.ok_or_else(|| DbError::from(rusqlite::Error::QueryReturnedNoRows))?
+                    User::find_by_id(tx, &id)?.ok_or_else(|| DbError::from(crate::sql::Error::QueryReturnedNoRows))?
                 }
             };
             let provider_identity: Option<String> = tx
                 .query_row(
                     r#"SELECT "id" FROM "AuthIdentity" WHERE "provider" = ?1 AND "userId" = ?2"#,
-                    rusqlite::params![OIDC_PROVIDER_KEY, resolved.id],
+                    crate::sql::params![OIDC_PROVIDER_KEY, resolved.id],
                     |r| r.get(0),
                 )
                 .optional()?;
@@ -619,14 +619,14 @@ async fn run_callback(st: &AppState, ctx: &Ctx, flow: &FlowPayload, headers: &mu
                 Some(identity_id) => {
                     tx.execute(
                         r#"UPDATE "AuthIdentity" SET "issuer" = ?1, "subject" = ?2, "emailAtLink" = ?3, "lastLoginAt" = ?4, "updatedAt" = ?4 WHERE "id" = ?5"#,
-                        rusqlite::params![tx_issuer, subject, tx_email, now, identity_id],
+                        crate::sql::params![tx_issuer, subject, tx_email, now, identity_id],
                     )?;
                 }
                 None => {
                     tx.execute(
                         r#"INSERT INTO "AuthIdentity" ("id","userId","provider","issuer","subject","emailAtLink","lastLoginAt","createdAt","updatedAt")
                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?7)"#,
-                        rusqlite::params![util::uuid_v4(), resolved.id, OIDC_PROVIDER_KEY, tx_issuer, subject, tx_email, now],
+                        crate::sql::params![util::uuid_v4(), resolved.id, OIDC_PROVIDER_KEY, tx_issuer, subject, tx_email, now],
                     )?;
                 }
             }
@@ -635,7 +635,7 @@ async fn run_callback(st: &AppState, ctx: &Ctx, flow: &FlowPayload, headers: &mu
                 if resolved.role != next {
                     tx.execute(
                         r#"UPDATE "User" SET "role" = ?1, "updatedAt" = ?2 WHERE "id" = ?3"#,
-                        rusqlite::params![next, now, resolved.id],
+                        crate::sql::params![next, now, resolved.id],
                     )?;
                     resolved = tx.query_row(
                         &format!(r#"SELECT {USER_COLS} FROM "User" WHERE "id" = ?1"#),
@@ -671,7 +671,7 @@ async fn run_callback(st: &AppState, ctx: &Ctx, flow: &FlowPayload, headers: &mu
             .call(move |c| {
                 c.execute(
                     r#"INSERT INTO "RefreshToken" ("id","userId","token","expiresAt","revoked","createdAt") VALUES (?1, ?2, ?3, ?4, 0, ?5)"#,
-                    rusqlite::params![util::uuid_v4(), uid, token, expires_at, util::now_ms()],
+                    crate::sql::params![util::uuid_v4(), uid, token, expires_at, util::now_ms()],
                 )?;
                 Ok(())
             })

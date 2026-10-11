@@ -208,7 +208,7 @@ fn retains_version_for_foreign_build_labels() {
 
 const BASELINE: &str = "20260822050000_drop_ai_tldraw";
 
-fn table_snapshot(db: &rusqlite::Connection, table: &str) -> (String, Vec<Vec<rusqlite::types::Value>>) {
+fn table_snapshot(db: &excalidash_rs::sql::Connection, table: &str) -> (String, Vec<Vec<excalidash_rs::sql::types::Value>>) {
     let cols: Vec<String> = db
         .prepare(&format!(r#"PRAGMA table_info("{table}")"#))
         .unwrap()
@@ -220,10 +220,9 @@ fn table_snapshot(db: &rusqlite::Connection, table: &str) -> (String, Vec<Vec<ru
     (query.clone(), rows(db, &query))
 }
 
-fn rows(db: &rusqlite::Connection, query: &str) -> Vec<Vec<rusqlite::types::Value>> {
+fn rows(db: &excalidash_rs::sql::Connection, query: &str) -> Vec<Vec<excalidash_rs::sql::types::Value>> {
     let mut st = db.prepare(query).unwrap();
-    let n = st.column_count();
-    st.query_map([], |r| Ok((0..n).map(|i| r.get(i).unwrap()).collect())).unwrap().map(Result::unwrap).collect()
+    st.query_map([], |r| Ok((0..r.column_count()).map(|i| r.get(i).unwrap()).collect())).unwrap().map(Result::unwrap).collect()
 }
 
 #[test]
@@ -237,7 +236,7 @@ fn upgrade_preserves_accounts_scenes_images_history_and_access() {
     assert!(names.iter().any(|n| *n > BASELINE));
     {
         // What `prisma migrate deploy` of the 0.6.2 baseline leaves behind.
-        let db = rusqlite::Connection::open(&db_path).unwrap();
+        let db = excalidash_rs::sql::Connection::open(&db_path).unwrap();
         db.execute_batch(
             r#"CREATE TABLE "_prisma_migrations" ("id" TEXT PRIMARY KEY NOT NULL, "checksum" TEXT NOT NULL, "finished_at" DATETIME,
                "migration_name" TEXT NOT NULL, "logs" TEXT, "rolled_back_at" DATETIME, "started_at" DATETIME NOT NULL DEFAULT current_timestamp,
@@ -250,12 +249,12 @@ fn upgrade_preserves_accounts_scenes_images_history_and_access() {
             let checksum = hex::encode(sha2::Sha256::digest(sql.as_bytes()));
             db.execute(
                 r#"INSERT INTO "_prisma_migrations" VALUES (?1, ?2, 1760000000000, ?3, NULL, NULL, 1760000000000, 1)"#,
-                rusqlite::params![uuid::Uuid::new_v4().to_string(), checksum, name],
+                excalidash_rs::sql::params![uuid::Uuid::new_v4().to_string(), checksum, name],
             )
             .unwrap();
         }
     }
-    let db = rusqlite::Connection::open(&db_path).unwrap();
+    let db = excalidash_rs::sql::Connection::open(&db_path).unwrap();
     db.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
     db.execute_batch(
         r##"
@@ -281,7 +280,7 @@ fn upgrade_preserves_accounts_scenes_images_history_and_access() {
     .unwrap();
     db.execute(
         "INSERT INTO DrawingFile (drawingId, fileId, mimeType, sizeBytes, storage, data) VALUES (?, ?, ?, ?, ?, ?)",
-        rusqlite::params!["drawing", "image", "image/png", 4, "db", vec![0u8, 1, 2, 255]],
+        excalidash_rs::sql::params!["drawing", "image", "image/png", 4, "db", vec![0u8, 1, 2, 255]],
     )
     .unwrap();
     let tables = [
@@ -291,7 +290,7 @@ fn upgrade_preserves_accounts_scenes_images_history_and_access() {
 
     // Two deploys: a second container start must not replay or corrupt migrations.
     for expected in [names.iter().filter(|n| **n > BASELINE).count(), 0] {
-        let mut c = rusqlite::Connection::open(&db_path).unwrap();
+        let mut c = excalidash_rs::sql::Connection::open(&db_path).unwrap();
         c.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
         assert_eq!(migrate_deploy(&mut c).unwrap(), expected);
     }

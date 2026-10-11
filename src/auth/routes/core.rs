@@ -8,7 +8,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use rusqlite::{Connection, OptionalExtension};
+use crate::sql::{Connection, OptionalExtension};
 use serde_json::{json, Map, Value};
 
 use super::helpers::{
@@ -298,21 +298,21 @@ struct OnboardingStatus {
     mode: &'static str,
 }
 
-fn count(c: &Connection, sql: &str) -> rusqlite::Result<i64> {
+fn count(c: &Connection, sql: &str) -> crate::sql::Result<i64> {
     c.query_row(sql, [], |r| r.get(0))
 }
 
-fn count_active_users(c: &Connection) -> rusqlite::Result<i64> {
+fn count_active_users(c: &Connection) -> crate::sql::Result<i64> {
     count(c, r#"SELECT COUNT(*) FROM "User" WHERE "isActive" = 1"#)
 }
 
 /// `prisma.user.findUnique({ where: { id: BOOTSTRAP_USER_ID }, select: { isActive } })`
-fn bootstrap_user_active(c: &Connection) -> rusqlite::Result<Option<bool>> {
+fn bootstrap_user_active(c: &Connection) -> crate::sql::Result<Option<bool>> {
     c.query_row(r#"SELECT "isActive" FROM "User" WHERE "id" = ?1"#, [BOOTSTRAP_USER_ID], |r| crate::db::boolean(r, 0))
         .optional()
 }
 
-fn auth_onboarding_status(c: &Connection, sc: &SystemConfig) -> rusqlite::Result<OnboardingStatus> {
+fn auth_onboarding_status(c: &Connection, sc: &SystemConfig) -> crate::sql::Result<OnboardingStatus> {
     let active_users = count_active_users(c)?;
     let drawings = count(c, r#"SELECT COUNT(*) FROM "Drawing""#)?;
     let collections = count(c, r#"SELECT COUNT(*) FROM "Collection""#)?;
@@ -329,31 +329,31 @@ fn bootstrap_required(auth_enabled: bool, bootstrap_active: Option<bool>, active
 }
 
 /// upsertAuthModeState (authOnboardingCompleted = true).
-fn upsert_auth_mode_state(c: &Connection, registration_enabled: bool, auth_enabled: bool) -> rusqlite::Result<SystemConfig> {
+fn upsert_auth_mode_state(c: &Connection, registration_enabled: bool, auth_enabled: bool) -> crate::sql::Result<SystemConfig> {
     let now = now_ms();
     c.execute(
         r#"INSERT INTO "SystemConfig" ("id","authEnabled","authOnboardingCompleted","registrationEnabled","authLoginRateLimitEnabled","authLoginRateLimitWindowMs","authLoginRateLimitMax","bootstrapSetupCodeFailedAttempts","createdAt","updatedAt")
            VALUES (?1, ?2, 1, ?3, 1, 900000, 20, 0, ?4, ?4)
            ON CONFLICT("id") DO UPDATE SET "authEnabled" = excluded."authEnabled", "authOnboardingCompleted" = 1, "updatedAt" = excluded."updatedAt""#,
-        rusqlite::params![DEFAULT_SYSTEM_CONFIG_ID, auth_enabled, registration_enabled, now],
+        crate::sql::params![DEFAULT_SYSTEM_CONFIG_ID, auth_enabled, registration_enabled, now],
     )?;
     Ok(SystemConfig::find(c)?.expect("system config row"))
 }
 
 /// `prisma.collection.upsert({ where: { id: trash:<id> }, update: {}, create })`
-fn upsert_trash_collection(c: &Connection, user_id: &str) -> rusqlite::Result<()> {
+fn upsert_trash_collection(c: &Connection, user_id: &str) -> crate::sql::Result<()> {
     let now = now_ms();
     c.execute(
         r#"INSERT INTO "Collection" ("id","name","userId","createdAt","updatedAt") VALUES (?1,'Trash',?2,?3,?3) ON CONFLICT("id") DO NOTHING"#,
-        rusqlite::params![crate::trash::user_trash_collection_id(user_id), user_id, now],
+        crate::sql::params![crate::trash::user_trash_collection_id(user_id), user_id, now],
     )?;
     Ok(())
 }
 
-fn create_refresh_token(c: &Connection, user_id: &str, refresh_token: &str, expires_at: i64) -> rusqlite::Result<()> {
+fn create_refresh_token(c: &Connection, user_id: &str, refresh_token: &str, expires_at: i64) -> crate::sql::Result<()> {
     c.execute(
         r#"INSERT INTO "RefreshToken" ("id","userId","token","expiresAt","revoked","createdAt") VALUES (?1,?2,?3,?4,0,?5)"#,
-        rusqlite::params![uuid_v4(), user_id, sha256_hex(refresh_token), expires_at, now_ms()],
+        crate::sql::params![uuid_v4(), user_id, sha256_hex(refresh_token), expires_at, now_ms()],
     )?;
     Ok(())
 }
@@ -459,7 +459,7 @@ async fn register_inner(st: &AppState, ctx: &Ctx, body: &Body, extra: &mut Heade
                 c.execute(
                     r#"UPDATE "User" SET "email" = ?1, "username" = ?2, "passwordHash" = ?3, "name" = ?4, "role" = 'ADMIN',
                        "mustResetPassword" = 0, "isActive" = 1, "updatedAt" = ?5 WHERE "id" = ?6"#,
-                    rusqlite::params![email, username, password_hash, name, now_ms(), BOOTSTRAP_USER_ID],
+                    crate::sql::params![email, username, password_hash, name, now_ms(), BOOTSTRAP_USER_ID],
                 )?;
                 Ok(User::find_by_id(c, BOOTSTRAP_USER_ID)?)
             })
@@ -522,7 +522,7 @@ async fn register_inner(st: &AppState, ctx: &Ctx, body: &Body, extra: &mut Heade
             c.execute(
                 r#"INSERT INTO "User" ("id","username","email","passwordHash","name","role","mustResetPassword","isActive","createdAt","updatedAt")
                    VALUES (?1,?2,?3,?4,?5,'USER',0,1,?6,?6)"#,
-                rusqlite::params![id, username, email, password_hash, name, now],
+                crate::sql::params![id, username, email, password_hash, name, now],
             )?;
             upsert_trash_collection(c, &id)?;
             Ok(User::find_by_id(c, &id)?.expect("created user"))
@@ -688,7 +688,7 @@ async fn refresh_verified(st: &AppState, ctx: &Ctx, extra: &mut HeaderMap, old_r
                 let stored = tx
                     .query_row(
                         r#"SELECT "id","userId","revoked","expiresAt" FROM "RefreshToken" WHERE "token" = ?1 OR "token" = ?2 LIMIT 1"#,
-                        rusqlite::params![candidates[0], candidates[1]],
+                        crate::sql::params![candidates[0], candidates[1]],
                         |r| {
                             Ok((
                                 r.get::<_, String>(0)?,

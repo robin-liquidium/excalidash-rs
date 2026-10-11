@@ -47,14 +47,14 @@ fn timing_safe_hex_compare(expected_hex: &str, actual_hex: &str) -> bool {
     expected.len() == actual.len() && crate::util::constant_time_eq(&expected, &actual)
 }
 
-fn should_require_bootstrap_setup_code(c: &rusqlite::Connection) -> rusqlite::Result<bool> {
+fn should_require_bootstrap_setup_code(c: &crate::sql::Connection) -> crate::sql::Result<bool> {
     let mode = config().auth_mode;
     if mode == AuthMode::OidcEnforced || mode == AuthMode::Disabled {
         return Ok(false);
     }
     let sc = SystemConfig::ensure(c)?;
     let bootstrap_active = {
-        use rusqlite::OptionalExtension;
+        use crate::sql::OptionalExtension;
         c.query_row(r#"SELECT "isActive" FROM "User" WHERE "id" = ?1"#, [BOOTSTRAP_USER_ID], |r| crate::db::boolean(r, 0))
             .optional()?
     };
@@ -81,7 +81,7 @@ pub async fn issue_if_required(db: &Db, reason: &str) -> Result<Option<(String, 
             c.execute(
                 r#"UPDATE "SystemConfig" SET "bootstrapSetupCodeHash" = ?1, "bootstrapSetupCodeIssuedAt" = ?2,
                    "bootstrapSetupCodeExpiresAt" = ?3, "bootstrapSetupCodeFailedAttempts" = 0, "updatedAt" = ?2 WHERE "id" = ?4"#,
-                rusqlite::params![code_hash, now, expires_at, DEFAULT_SYSTEM_CONFIG_ID],
+                crate::sql::params![code_hash, now, expires_at, DEFAULT_SYSTEM_CONFIG_ID],
             )?;
             Ok(Some((code, expires_at)))
         })
@@ -136,14 +136,14 @@ pub async fn verify(db: &Db, provided: Option<String>, max_attempts: i64) -> Res
         if !timing_safe_hex_compare(hash, &provided_hash) {
             c.execute(
                 r#"UPDATE "SystemConfig" SET "bootstrapSetupCodeFailedAttempts" = "bootstrapSetupCodeFailedAttempts" + 1, "updatedAt" = ?1 WHERE "id" = ?2"#,
-                rusqlite::params![now_ms(), DEFAULT_SYSTEM_CONFIG_ID],
+                crate::sql::params![now_ms(), DEFAULT_SYSTEM_CONFIG_ID],
             )?;
             return Ok(Err(VerifyFailure::Invalid));
         }
         c.execute(
             r#"UPDATE "SystemConfig" SET "bootstrapSetupCodeHash" = NULL, "bootstrapSetupCodeIssuedAt" = NULL,
                "bootstrapSetupCodeExpiresAt" = NULL, "bootstrapSetupCodeFailedAttempts" = 0, "updatedAt" = ?1 WHERE "id" = ?2"#,
-            rusqlite::params![now_ms(), DEFAULT_SYSTEM_CONFIG_ID],
+            crate::sql::params![now_ms(), DEFAULT_SYSTEM_CONFIG_ID],
         )?;
         Ok(Ok(()))
     })

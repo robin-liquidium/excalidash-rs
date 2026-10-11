@@ -1,5 +1,5 @@
 //! Shared row types for the most widely used tables.
-use rusqlite::{Connection, OptionalExtension, Row};
+use crate::sql::{Connection, OptionalExtension, Row};
 use serde_json::{json, Value};
 
 use crate::db::{boolean, dt, opt_bool, opt_dt};
@@ -27,7 +27,7 @@ pub const USER_COLS: &str =
     r#""id","username","email","passwordHash","name","role","mustResetPassword","isActive","preferences","createdAt","updatedAt""#;
 
 impl User {
-    pub fn from_row(r: &Row<'_>) -> rusqlite::Result<User> {
+    pub fn from_row(r: &Row<'_>) -> crate::sql::Result<User> {
         Ok(User {
             id: r.get(0)?,
             username: r.get(1)?,
@@ -43,12 +43,12 @@ impl User {
         })
     }
 
-    pub fn find_by_id(c: &Connection, id: &str) -> rusqlite::Result<Option<User>> {
+    pub fn find_by_id(c: &Connection, id: &str) -> crate::sql::Result<Option<User>> {
         c.query_row(&format!(r#"SELECT {USER_COLS} FROM "User" WHERE "id" = ?1"#), [id], User::from_row)
             .optional()
     }
 
-    pub fn find_by_email(c: &Connection, email: &str) -> rusqlite::Result<Option<User>> {
+    pub fn find_by_email(c: &Connection, email: &str) -> crate::sql::Result<Option<User>> {
         c.query_row(&format!(r#"SELECT {USER_COLS} FROM "User" WHERE "email" = ?1"#), [email], User::from_row)
             .optional()
     }
@@ -99,7 +99,7 @@ pub struct SystemConfig {
 pub const SYSTEM_CONFIG_COLS: &str = r#""id","authEnabled","authOnboardingCompleted","registrationEnabled","oidcJitProvisioningEnabled","authLoginRateLimitEnabled","authLoginRateLimitWindowMs","authLoginRateLimitMax","bootstrapSetupCodeHash","bootstrapSetupCodeIssuedAt","bootstrapSetupCodeExpiresAt","bootstrapSetupCodeFailedAttempts","aiChatgptEnabled","createdAt","updatedAt""#;
 
 impl SystemConfig {
-    pub fn from_row(r: &Row<'_>) -> rusqlite::Result<SystemConfig> {
+    pub fn from_row(r: &Row<'_>) -> crate::sql::Result<SystemConfig> {
         Ok(SystemConfig {
             id: r.get(0)?,
             auth_enabled: boolean(r, 1)?,
@@ -119,7 +119,7 @@ impl SystemConfig {
         })
     }
 
-    pub fn find(c: &Connection) -> rusqlite::Result<Option<SystemConfig>> {
+    pub fn find(c: &Connection) -> crate::sql::Result<Option<SystemConfig>> {
         c.query_row(
             &format!(r#"SELECT {SYSTEM_CONFIG_COLS} FROM "SystemConfig" WHERE "id" = ?1"#),
             [DEFAULT_SYSTEM_CONFIG_ID],
@@ -129,7 +129,7 @@ impl SystemConfig {
     }
 
     /// authMode.ts ensureSystemConfig: read first, upsert only when missing.
-    pub fn ensure(c: &Connection) -> rusqlite::Result<SystemConfig> {
+    pub fn ensure(c: &Connection) -> crate::sql::Result<SystemConfig> {
         if let Some(existing) = Self::find(c)? {
             return Ok(existing);
         }
@@ -138,14 +138,14 @@ impl SystemConfig {
         c.execute(
             r#"INSERT INTO "SystemConfig" ("id","authEnabled","authOnboardingCompleted","registrationEnabled","oidcJitProvisioningEnabled","authLoginRateLimitEnabled","authLoginRateLimitWindowMs","authLoginRateLimitMax","createdAt","updatedAt")
                VALUES (?1, ?2, 0, 0, NULL, 1, 900000, 20, ?3, ?3) ON CONFLICT("id") DO NOTHING"#,
-            rusqlite::params![DEFAULT_SYSTEM_CONFIG_ID, auth_enabled, now],
+            crate::sql::params![DEFAULT_SYSTEM_CONFIG_ID, auth_enabled, now],
         )?;
         Ok(Self::find(c)?.expect("system config row"))
     }
 }
 
 /// authMode.ts getBootstrapActingUser (upsert, never modifies an existing row).
-pub fn bootstrap_acting_user(c: &Connection) -> rusqlite::Result<User> {
+pub fn bootstrap_acting_user(c: &Connection) -> crate::sql::Result<User> {
     if let Some(u) = User::find_by_id(c, BOOTSTRAP_USER_ID)? {
         return Ok(u);
     }
@@ -153,7 +153,7 @@ pub fn bootstrap_acting_user(c: &Connection) -> rusqlite::Result<User> {
     c.execute(
         r#"INSERT INTO "User" ("id","username","email","passwordHash","name","role","mustResetPassword","isActive","createdAt","updatedAt")
            VALUES (?1, NULL, 'bootstrap@excalidash.local', '', 'Bootstrap Admin', 'ADMIN', 1, 0, ?2, ?2) ON CONFLICT("id") DO NOTHING"#,
-        rusqlite::params![BOOTSTRAP_USER_ID, now],
+        crate::sql::params![BOOTSTRAP_USER_ID, now],
     )?;
     Ok(User::find_by_id(c, BOOTSTRAP_USER_ID)?.expect("bootstrap user"))
 }

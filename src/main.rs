@@ -43,8 +43,10 @@ fn entrypoint(data_dir: &std::path::Path) {
         None => println!("DATABASE_PROVIDER not set, defaulting to sqlite"),
         Some(p) if p == "sqlite" => {}
         Some(p) if p == "postgresql" => {
-            eprintln!("ERROR: DATABASE_PROVIDER=postgresql is not supported by the Rust build (SQLite only).");
-            std::process::exit(1);
+            if !cfg!(feature = "postgres") {
+                eprintln!("ERROR: DATABASE_PROVIDER=postgresql needs a build with the `postgres` cargo feature.");
+                std::process::exit(1);
+            }
         }
         Some(p) => {
             eprintln!("ERROR: DATABASE_PROVIDER must be 'sqlite' or 'postgresql', got '{p}'");
@@ -77,7 +79,17 @@ fn run_migrations(cfg: &Config) {
         return;
     }
     println!("Running database migrations...");
-    let data_dir = cfg.database_path.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    // Prisma requires the URL scheme to match the provider the migrations were generated for.
+    let want_pg = std::env::var("DATABASE_PROVIDER").map(|p| p == "postgresql").unwrap_or(false);
+    if want_pg != cfg.database_path.is_none() {
+        let protocol = if want_pg { "`postgresql://` or `postgres://`" } else { "`file:`" };
+        eprintln!("Error: the URL must start with the protocol {protocol}.");
+        std::process::exit(1);
+    }
+    let data_dir = match &cfg.database_path {
+        Some(p) => p.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".")),
+        None => cfg.backend_root.join("prisma"),
+    };
     let _ = std::fs::create_dir_all(&data_dir);
     let lock = data_dir.join(".migration-lock");
     let timeout: u64 = std::env::var("MIGRATION_LOCK_TIMEOUT_SECONDS").ok().and_then(|v| v.parse().ok()).unwrap_or(120);
@@ -91,10 +103,15 @@ fn run_migrations(cfg: &Config) {
         std::thread::sleep(Duration::from_secs(1));
     }
     let result = (|| -> Result<usize, String> {
-        let mut c = rusqlite::Connection::open(&cfg.database_path).map_err(|e| e.to_string())?;
-        c.busy_timeout(Duration::from_secs(10)).map_err(|e| e.to_string())?;
-        c.execute_batch("PRAGMA foreign_keys = OFF;").map_err(|e| e.to_string())?;
-        println!("Datasource \"db\": SQLite database \"{}\"", cfg.database_path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default());
+        let mut c = excalidash_rs::sql::Connection::open_url(&cfg.database_url).map_err(|e| e.to_string())?;
+        match &cfg.database_path {
+            Some(path) => {
+                c.busy_timeout(Duration::from_secs(10)).map_err(|e| e.to_string())?;
+                c.execute_batch("PRAGMA foreign_keys = OFF;").map_err(|e| e.to_string())?;
+                println!("Datasource \"db\": SQLite database \"{}\"", path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default());
+            }
+            None => println!("Datasource \"db\": {}", postgres_datasource(&cfg.database_url)),
+        }
         db::migrate_deploy(&mut c)
     })();
     let _ = std::fs::remove_dir(&lock);
@@ -102,6 +119,16 @@ fn run_migrations(cfg: &Config) {
         eprintln!("Error: {e}");
         std::process::exit(1);
     }
+}
+
+/// Prisma's `PostgreSQL database "x", schema "public" at "host:port"` line.
+fn postgres_datasource(url: &str) -> String {
+    let u = url::Url::parse(url).ok();
+    let q = |k: &str| u.as_ref().and_then(|u| u.query_pairs().find(|(n, _)| n == k).map(|(_, v)| v.into_owned()));
+    let db = u.as_ref().map(|u| u.path().trim_start_matches('/').to_string()).unwrap_or_default();
+    let host = u.as_ref().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+    let port = u.as_ref().and_then(|u| u.port()).unwrap_or(5432);
+    format!("PostgreSQL database \"{db}\", schema \"{}\" at \"{host}:{port}\"", q("schema").unwrap_or_else(|| "public".into()))
 }
 
 fn inspect_list(items: &[String]) -> String {
@@ -151,7 +178,8 @@ async fn async_main() {
 
     // Resolve the DB path first so the entrypoint can persist secrets beside it.
     match config::resolve_database_url(&backend_root, std::env::var("DATABASE_URL").ok()) {
-        Ok((_, path)) => entrypoint(path.parent().unwrap_or(&backend_root)),
+        Ok((_, Some(path))) => entrypoint(path.parent().unwrap_or(&backend_root)),
+        Ok((_, None)) => entrypoint(&backend_root.join("prisma")),
         Err(_) => entrypoint(&backend_root.join("prisma")),
     }
     let cfg = match Config::from_env(&ProcessEnv, backend_root) {
@@ -174,7 +202,7 @@ async fn async_main() {
         other => println!("[config] trust proxy: {}", other.log_value()),
     }
 
-    let database = match Db::open(&cfg.database_path) {
+    let database = match Db::open_url(&cfg.database_url) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("Failed to open database: {e}");

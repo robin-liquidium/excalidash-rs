@@ -22,6 +22,7 @@ k256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "std
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1", "builder", "tokio1-rustls", "ring", "webpki-roots"] }
 p521 = { version = "0.14.0", default-features = false, features = ["ecdsa", "std"] }
 percent-encoding = "2.3.2"
+postgres = { version = "0.19.14", features = ["with-chrono-0_4"], optional = true }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.35.0"
 rand = "0.10.3"
@@ -38,6 +39,7 @@ sha2 = "0.11.0"
 socketioxide = { version = "0.18.7", features = ["state", "extensions"] }
 subtle = "2.6.1"
 tokio = { version = "1.53.2", features = ["rt", "rt-multi-thread", "net", "time", "macros", "sync", "signal", "fs", "io-util"] }
+tokio-postgres-rustls = { version = "0.14.0", optional = true }
 tower = { version = "0.5.3", default-features = false, features = ["util"] }
 url = "2.5.8"
 uuid = { version = "1.28.0", features = ["v4"] }
@@ -64,3 +66,8 @@ uuid = { version = "1", features = ["v4"] }
 # exact header-name spellings, and explicit `Content-Length: 0` kept on 204 responses.
 [patch.crates-io]
 hyper = { path = "vendor/hyper" }
+
+[features]
+default = []
+# PostgreSQL support (DATABASE_URL=postgresql://…), off by default to keep the SQLite build lean.
+postgres = ["dep:postgres", "dep:tokio-postgres-rustls"]

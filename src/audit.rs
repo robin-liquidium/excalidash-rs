@@ -22,7 +22,7 @@ pub async fn log_audit_event(db: &Db, ev: AuditEvent) {
         .call(move |c| {
             c.execute(
                 r#"INSERT INTO "AuditLog" ("id","userId","action","resource","ipAddress","userAgent","details","createdAt") VALUES (?1,?2,?3,?4,?5,?6,?7,?8)"#,
-                rusqlite::params![
+                crate::sql::params![
                     crate::util::uuid_v4(),
                     ev.user_id.filter(|s| !s.is_empty()),
                     ev.action,
@@ -56,7 +56,7 @@ pub async fn get_audit_logs(db: &Db, user_id: Option<String>, limit: i64) -> Vec
                 if user_id.is_some() { r#"WHERE a."userId" = ?2"# } else { "" }
             );
             let mut st = c.prepare(&sql)?;
-            let map = |r: &rusqlite::Row<'_>| -> rusqlite::Result<Value> {
+            let map = |r: &crate::sql::Row<'_>| -> crate::sql::Result<Value> {
                 let details: Option<String> = r.get(6)?;
                 let user_id: Option<String> = r.get(8)?;
                 Ok(json!({
@@ -75,8 +75,8 @@ pub async fn get_audit_logs(db: &Db, user_id: Option<String>, limit: i64) -> Vec
                 }))
             };
             let rows: Vec<Value> = match &user_id {
-                Some(uid) => st.query_map(rusqlite::params![limit, uid], map)?.collect::<Result<_, _>>()?,
-                None => st.query_map(rusqlite::params![limit], map)?.collect::<Result<_, _>>()?,
+                Some(uid) => st.query_map(crate::sql::params![limit, uid], map)?.collect::<Result<_, _>>()?,
+                None => st.query_map(crate::sql::params![limit], map)?.collect::<Result<_, _>>()?,
             };
             Ok(rows)
         })

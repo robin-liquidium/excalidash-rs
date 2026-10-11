@@ -238,7 +238,7 @@ fn revoking_a_link_share_removes_public_access() {
     // Expired shares grant nothing either.
     let share = o.link(&d, "view", None);
     o.s.db()
-        .execute(r#"UPDATE "DrawingLinkShare" SET "expiresAt" = ?1 WHERE "id" = ?2"#, rusqlite::params![now_ms() - 1000, share["share"]["id"].as_str().unwrap()])
+        .execute(r#"UPDATE "DrawingLinkShare" SET "expiresAt" = ?1 WHERE "id" = ?2"#, excalidash_rs::sql::params![now_ms() - 1000, share["share"]["id"].as_str().unwrap()])
         .unwrap();
     assert_eq!(o.s.client().get(&format!("/drawings/{d}")).status, 404);
 }

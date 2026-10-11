@@ -82,7 +82,7 @@ fn create_drawing(s: &TestServer, user_id: &str, name: &str) -> String {
         .execute(
             r#"INSERT INTO "Drawing" ("id","name","elements","appState","files","userId","version","createdAt","updatedAt")
                VALUES (?1,?2,'[]','{}','{}',?3,1,?4,?4)"#,
-            rusqlite::params![id, name, user_id, now],
+            excalidash_rs::sql::params![id, name, user_id, now],
         )
         .unwrap();
     id
@@ -121,7 +121,7 @@ fn collaborator_raw_upload_lands_in_owner_namespace() {
         .execute(
             r#"INSERT INTO "DrawingPermission" ("id","drawingId","granteeUserId","permission","createdByUserId","createdAt","updatedAt")
                VALUES (?1,?2,?3,'edit',?4,?5,?5)"#,
-            rusqlite::params![uuid::Uuid::new_v4().to_string(), d, peer_id, owner_id, now],
+            excalidash_rs::sql::params![uuid::Uuid::new_v4().to_string(), d, peer_id, owner_id, now],
         )
         .unwrap();
     assert_eq!(owner.get("/files/config").json(), json!({"s3Enabled": true}));
@@ -216,7 +216,7 @@ fn trim_and_orphans_delete_only_unreferenced_objects() {
                 .execute(
                     r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt")
                        VALUES (?1,?2,'image/png',3,'s3',?3,NULL,?4)"#,
-                    rusqlite::params![d, fid, key, now],
+                    excalidash_rs::sql::params![d, fid, key, now],
                 )
                 .unwrap();
         }
@@ -225,7 +225,7 @@ fn trim_and_orphans_delete_only_unreferenced_objects() {
             .execute(
                 r#"INSERT INTO "DrawingSnapshot" ("id","drawingId","version","elements","appState","files","createdAt")
                    VALUES (?1,?2,1,'[]','{}',?3,?4)"#,
-                rusqlite::params![uuid::Uuid::new_v4().to_string(), d, excalidash_rs::snapshots::encode_field(&files.to_string(), true), now],
+                excalidash_rs::sql::params![uuid::Uuid::new_v4().to_string(), d, excalidash_rs::snapshots::encode_field(&files.to_string(), true), now],
             )
             .unwrap();
         let r = if op == "trim" {
@@ -320,7 +320,7 @@ fn duplicate_copies_and_delete_removes_s3_objects() {
     s.db()
         .execute(
             r#"UPDATE "Drawing" SET "files" = ?1 WHERE "id" = ?2"#,
-            rusqlite::params![json!({"img-a": {"id": "img-a", "mimeType": "image/png", "dataURL": format!("/api/files/{d}/img-a")}}).to_string(), d],
+            excalidash_rs::sql::params![json!({"img-a": {"id": "img-a", "mimeType": "image/png", "dataURL": format!("/api/files/{d}/img-a")}}).to_string(), d],
         )
         .unwrap();
 

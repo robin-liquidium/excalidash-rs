@@ -223,8 +223,12 @@ pub fn start_scheduled_backups(st: &AppState) {
             }
             last_run = Some(key);
             // Runs are awaited, so they never overlap (`running` upstream).
-            let (dir, db_path) = (dir.clone(), db_path.clone());
-            let r = db.call(move |c| Ok(create_sqlite_backup(c, &db_path, &dir, retention))).await;
+            let Some(db_path) = db_path.clone() else {
+                eprintln!("[backup] Scheduled backups currently support SQLite file: DATABASE_URL values only.");
+                continue;
+            };
+            let dir = dir.clone();
+            let r = db.call(move |c| Ok(create_sqlite_backup(c.as_sqlite().expect("sqlite"), &db_path, &dir, retention))).await;
             match r {
                 Ok(Ok(_)) => {}
                 Ok(Err(e)) => eprintln!("[backup] Scheduled backup failed: Error: {e}"),

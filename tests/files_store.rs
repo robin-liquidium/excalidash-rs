@@ -38,7 +38,7 @@ pub fn create_drawing(s: &TestServer, user_id: &str, name: &str, elements: &Valu
         .execute(
             r#"INSERT INTO "Drawing" ("id","name","elements","appState","files","userId","version","createdAt","updatedAt")
                VALUES (?1,?2,?3,'{}',?4,?5,?6,?7,?7)"#,
-            rusqlite::params![id, name, elements.to_string(), files.to_string(), user_id, version, now],
+            excalidash_rs::sql::params![id, name, elements.to_string(), files.to_string(), user_id, version, now],
         )
         .unwrap();
     id
@@ -137,7 +137,7 @@ fn non_editor_upload_is_404_and_viewer_too() {
         .execute(
             r#"INSERT INTO "DrawingPermission" ("id","drawingId","granteeUserId","permission","createdByUserId","createdAt","updatedAt")
                VALUES (?1,?2,?3,'view',?4,?5,?5)"#,
-            rusqlite::params![uuid::Uuid::new_v4().to_string(), d, t.other_id, t.owner_id, now],
+            excalidash_rs::sql::params![uuid::Uuid::new_v4().to_string(), d, t.other_id, t.owner_id, now],
         )
         .unwrap();
     assert_eq!(upload(&t.other, &d, "img-1", png_bytes(), "image/png").status, 404);
@@ -191,7 +191,7 @@ fn get_access_rules_and_not_found() {
         .execute(
             r#"INSERT INTO "DrawingLinkShare" ("id","drawingId","tokenHash","permission","createdByUserId","expiresAt","revokedAt","createdAt","updatedAt")
                VALUES (?1,?2,?3,'view',?4,?5,NULL,?6,?6)"#,
-            rusqlite::params![share, d, uuid::Uuid::new_v4().to_string(), t.owner_id, now + 60_000, now],
+            excalidash_rs::sql::params![share, d, uuid::Uuid::new_v4().to_string(), t.owner_id, now + 60_000, now],
         )
         .unwrap();
     let r = anon.get(&format!("/files/{d}/img-1"));
@@ -204,7 +204,7 @@ fn get_access_rules_and_not_found() {
         .execute(
             r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt")
                VALUES (?1,'empty','image/png',0,'db',NULL,NULL,?2)"#,
-            rusqlite::params![d, now],
+            excalidash_rs::sql::params![d, now],
         )
         .unwrap();
     assert_eq!(t.owner.get(&format!("/files/{d}/empty")).status, 404);
@@ -213,7 +213,7 @@ fn get_access_rules_and_not_found() {
         .execute(
             r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt")
                VALUES (?1,'remote','image/png',3,'s3','k/remote.png',NULL,?2)"#,
-            rusqlite::params![d, now],
+            excalidash_rs::sql::params![d, now],
         )
         .unwrap();
     assert_eq!(t.owner.get(&format!("/files/{d}/remote")).status, 404);
@@ -228,7 +228,7 @@ fn empty_legacy_row_is_repaired_by_upload() {
         .execute(
             r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt")
                VALUES (?1,'image','image/png',0,'db',NULL,NULL,?2)"#,
-            rusqlite::params![d, now],
+            excalidash_rs::sql::params![d, now],
         )
         .unwrap();
     assert_eq!(upload(&t.owner, &d, "image", vec![1, 2, 3], "image/gif").status, 200);

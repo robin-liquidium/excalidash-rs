@@ -4,23 +4,30 @@
 //! writes a value, while `DEFAULT CURRENT_TIMESTAMP` columns hold TEXT
 //! (`YYYY-MM-DD HH:MM:SS`). Booleans are INTEGER 0/1. We read both date forms
 //! and always write integer ms, exactly like Prisma.
+use crate::sql::{types::ValueRef, Connection, OptionalExtension, Row, SqliteHandle};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{types::ValueRef, Connection, OptionalExtension, Row};
 use std::{path::Path, time::Duration};
 
 include!(concat!(env!("OUT_DIR"), "/migrations.rs"));
 
-pub type Conn = r2d2::PooledConnection<SqliteConnectionManager>;
+pub type Conn = Connection;
+
+#[derive(Clone)]
+enum Backend {
+    Sqlite(Pool<SqliteConnectionManager>),
+    #[cfg(feature = "postgres")]
+    Pg(Pool<crate::sql::pg::PgManager>),
+}
 
 #[derive(Clone)]
 pub struct Db {
-    pool: Pool<SqliteConnectionManager>,
+    pool: Backend,
 }
 
 #[derive(Debug)]
 pub enum DbError {
-    Sqlite(rusqlite::Error),
+    Sql(crate::sql::Error),
     Pool(String),
     Join(String),
 }
@@ -28,29 +35,32 @@ pub enum DbError {
 impl std::fmt::Display for DbError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DbError::Sqlite(e) => write!(f, "{e}"),
+            DbError::Sql(e) => write!(f, "{e}"),
             DbError::Pool(e) => write!(f, "connection pool: {e}"),
             DbError::Join(e) => write!(f, "task: {e}"),
         }
     }
 }
 impl std::error::Error for DbError {}
+impl From<crate::sql::Error> for DbError {
+    fn from(e: crate::sql::Error) -> Self {
+        DbError::Sql(e)
+    }
+}
 impl From<rusqlite::Error> for DbError {
     fn from(e: rusqlite::Error) -> Self {
-        DbError::Sqlite(e)
+        DbError::Sql(e.into())
     }
 }
 
 impl DbError {
     /// True for UNIQUE constraint violations (Prisma P2002).
     pub fn is_unique_violation(&self) -> bool {
-        matches!(self, DbError::Sqlite(rusqlite::Error::SqliteFailure(e, _))
-            if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
-                || e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY)
+        matches!(self, DbError::Sql(e) if e.is_unique_violation())
     }
 }
 
-fn init_connection(c: &mut Connection) -> rusqlite::Result<()> {
+fn init_connection(c: &mut rusqlite::Connection) -> rusqlite::Result<()> {
     c.busy_timeout(Duration::from_millis(10_000))?;
     // Prisma's SQLite connector runs with foreign keys enforced (cascades are in the DDL).
     c.execute_batch("PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL; PRAGMA cache_size = -1024;")?;
@@ -70,11 +80,42 @@ impl Db {
             .connection_timeout(Duration::from_secs(15))
             .build(manager)
             .map_err(|e| DbError::Pool(e.to_string()))?;
-        Ok(Db { pool })
+        Ok(Db { pool: Backend::Sqlite(pool) })
+    }
+
+    /// Open by resolved DATABASE_URL (`file:` or `postgresql://`).
+    pub fn open_url(url: &str) -> Result<Db, DbError> {
+        #[cfg(feature = "postgres")]
+        if crate::sql::pg::is_postgres_url(url) {
+            let target = crate::sql::pg::parse_url(url)?;
+            let size = target.pool_size;
+            let pool = Pool::builder()
+                .max_size(size)
+                .min_idle(Some(1))
+                .idle_timeout(Some(Duration::from_secs(60)))
+                .connection_timeout(Duration::from_secs(15))
+                .build(crate::sql::pg::PgManager(target))
+                .map_err(|e| DbError::Pool(e.to_string()))?;
+            return Ok(Db { pool: Backend::Pg(pool) });
+        }
+        let path = url.strip_prefix("file:").ok_or_else(|| DbError::Pool(format!("unsupported DATABASE_URL: {url}")))?;
+        Db::open(Path::new(path.split('?').next().unwrap_or(path)))
+    }
+
+    pub fn is_postgres(&self) -> bool {
+        !matches!(self.pool, Backend::Sqlite(_))
     }
 
     pub fn get(&self) -> Result<Conn, DbError> {
-        self.pool.get().map_err(|e| DbError::Pool(e.to_string()))
+        match &self.pool {
+            Backend::Sqlite(p) => {
+                Ok(Connection::from_sqlite(SqliteHandle::Pooled(p.get().map_err(|e| DbError::Pool(e.to_string()))?)))
+            }
+            #[cfg(feature = "postgres")]
+            Backend::Pg(p) => Ok(Connection::from_pg(crate::sql::pg::PgConn::Pooled(
+                p.get().map_err(|e| DbError::Pool(e.to_string()))?,
+            ))),
+        }
     }
 
     /// Run blocking DB work off the async runtime.
@@ -83,9 +124,9 @@ impl Db {
         F: FnOnce(&mut Connection) -> Result<R, DbError> + Send + 'static,
         R: Send + 'static,
     {
-        let pool = self.pool.clone();
+        let db = self.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(|e| DbError::Pool(e.to_string()))?;
+            let mut conn = db.get()?;
             f(&mut conn)
         })
         .await
@@ -95,11 +136,11 @@ impl Db {
     /// Like [`Db::call`] but wraps the closure in an IMMEDIATE transaction.
     pub async fn tx<F, R>(&self, f: F) -> Result<R, DbError>
     where
-        F: FnOnce(&rusqlite::Transaction<'_>) -> Result<R, DbError> + Send + 'static,
+        F: FnOnce(&crate::sql::Transaction<'_>) -> Result<R, DbError> + Send + 'static,
         R: Send + 'static,
     {
         self.call(move |c| {
-            let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let tx = c.transaction_with_behavior(crate::sql::TransactionBehavior::Immediate)?;
             let out = f(&tx)?;
             tx.commit()?;
             Ok(out)
@@ -110,6 +151,7 @@ impl Db {
 
 /// Mirror `configureSqlite()`: WAL journal + busy timeout.
 pub fn configure_sqlite(c: &Connection) {
+    let Some(c) = c.as_sqlite() else { return };
     let r = (|| -> rusqlite::Result<()> {
         c.busy_timeout(Duration::from_millis(10_000))?;
         let _: String = c.query_row("PRAGMA journal_mode = WAL;", [], |r| r.get(0))?;
@@ -132,10 +174,37 @@ const PRISMA_MIGRATIONS_DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_prisma_migra
     "applied_steps_count"   INTEGER UNSIGNED NOT NULL DEFAULT 0
 );"#;
 
+#[cfg(feature = "postgres")]
+const PRISMA_MIGRATIONS_DDL_PG: &str = r#"CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
+    "id"                    VARCHAR(36) PRIMARY KEY NOT NULL,
+    "checksum"              VARCHAR(64) NOT NULL,
+    "finished_at"           TIMESTAMPTZ,
+    "migration_name"        VARCHAR(255) NOT NULL,
+    "logs"                  TEXT,
+    "rolled_back_at"        TIMESTAMPTZ,
+    "started_at"            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    "applied_steps_count"   INTEGER NOT NULL DEFAULT 0
+);"#;
+
+/// Prisma Migrate's advisory lock id on PostgreSQL.
+#[cfg(feature = "postgres")]
+const PRISMA_ADVISORY_LOCK: i64 = 72707369;
+
 /// `prisma migrate deploy` equivalent: applies pending embedded migrations and
 /// records them in `_prisma_migrations` with Prisma's checksum (sha256 of the file).
 pub fn migrate_deploy(c: &mut Connection) -> Result<usize, String> {
-    c.execute_batch(PRISMA_MIGRATIONS_DDL).map_err(|e| e.to_string())?;
+    #[cfg(feature = "postgres")]
+    if c.is_postgres() {
+        c.execute_batch_raw(&format!("SELECT pg_advisory_lock({PRISMA_ADVISORY_LOCK})")).map_err(|e| e.to_string())?;
+        let r = apply_migrations(c, PRISMA_MIGRATIONS_DDL_PG, MIGRATIONS_PG);
+        let _ = c.execute_batch_raw(&format!("SELECT pg_advisory_unlock({PRISMA_ADVISORY_LOCK})"));
+        return r;
+    }
+    apply_migrations(c, PRISMA_MIGRATIONS_DDL, MIGRATIONS)
+}
+
+fn apply_migrations(c: &mut Connection, ddl: &str, migrations: &[(&str, &str)]) -> Result<usize, String> {
+    c.execute_batch_raw(ddl).map_err(|e| e.to_string())?;
     // Fail like Prisma (P3009) when a previous migration attempt failed.
     let failed: Option<String> = c
         .query_row(
@@ -160,12 +229,12 @@ pub fn migrate_deploy(c: &mut Connection) -> Result<usize, String> {
             applied.insert(r.map_err(|e| e.to_string())?);
         }
     }
-    let pending: Vec<&(&str, &str)> = MIGRATIONS.iter().filter(|(n, _)| !applied.contains(*n)).collect();
+    let pending: Vec<&(&str, &str)> = migrations.iter().filter(|(n, _)| !applied.contains(*n)).collect();
     if pending.is_empty() {
         println!("No pending migrations to apply.");
         return Ok(0);
     }
-    println!("{} migrations found in prisma/migrations", MIGRATIONS.len());
+    println!("{} migrations found in prisma/migrations", migrations.len());
     println!("Applying migration{}", if pending.len() == 1 { "" } else { "s" });
     for (name, sql) in &pending {
         let id = crate::util::uuid_v4();
@@ -173,19 +242,19 @@ pub fn migrate_deploy(c: &mut Connection) -> Result<usize, String> {
         let started = crate::util::now_ms();
         c.execute(
             r#"INSERT INTO "_prisma_migrations" (id, checksum, started_at, finished_at, migration_name, logs, rolled_back_at, applied_steps_count) VALUES (?1, ?2, ?3, NULL, ?4, NULL, NULL, 0)"#,
-            rusqlite::params![id, checksum, started, name],
+            crate::sql::params![id, checksum, started, name],
         )
         .map_err(|e| e.to_string())?;
-        if let Err(e) = c.execute_batch(sql) {
+        if let Err(e) = c.execute_batch_raw(sql) {
             let _ = c.execute(
                 r#"UPDATE "_prisma_migrations" SET logs = ?1 WHERE id = ?2"#,
-                rusqlite::params![e.to_string(), id],
+                crate::sql::params![e.to_string(), id],
             );
             return Err(format!("Migration `{name}` failed: {e}"));
         }
         c.execute(
             r#"UPDATE "_prisma_migrations" SET finished_at = ?1, applied_steps_count = 1 WHERE id = ?2"#,
-            rusqlite::params![crate::util::now_ms(), id],
+            crate::sql::params![crate::util::now_ms(), id],
         )
         .map_err(|e| e.to_string())?;
         println!("  - {name}");
@@ -198,11 +267,11 @@ pub fn migrate_deploy(c: &mut Connection) -> Result<usize, String> {
 // Row helpers
 
 /// Read a Prisma DateTime column (INTEGER ms or TEXT) as unix ms.
-pub fn dt(row: &Row<'_>, idx: impl rusqlite::RowIndex) -> rusqlite::Result<i64> {
+pub fn dt(row: &Row<'_>, idx: impl crate::sql::RowIndex) -> crate::sql::Result<i64> {
     Ok(opt_dt(row, idx)?.unwrap_or(0))
 }
 
-pub fn opt_dt(row: &Row<'_>, idx: impl rusqlite::RowIndex) -> rusqlite::Result<Option<i64>> {
+pub fn opt_dt(row: &Row<'_>, idx: impl crate::sql::RowIndex) -> crate::sql::Result<Option<i64>> {
     Ok(match row.get_ref(idx)? {
         ValueRef::Null => None,
         ValueRef::Integer(i) => Some(i),
@@ -212,11 +281,11 @@ pub fn opt_dt(row: &Row<'_>, idx: impl rusqlite::RowIndex) -> rusqlite::Result<O
     })
 }
 
-pub fn boolean(row: &Row<'_>, idx: impl rusqlite::RowIndex) -> rusqlite::Result<bool> {
+pub fn boolean(row: &Row<'_>, idx: impl crate::sql::RowIndex) -> crate::sql::Result<bool> {
     Ok(opt_bool(row, idx)?.unwrap_or(false))
 }
 
-pub fn opt_bool(row: &Row<'_>, idx: impl rusqlite::RowIndex) -> rusqlite::Result<Option<bool>> {
+pub fn opt_bool(row: &Row<'_>, idx: impl crate::sql::RowIndex) -> crate::sql::Result<Option<bool>> {
     Ok(match row.get_ref(idx)? {
         ValueRef::Null => None,
         ValueRef::Integer(i) => Some(i != 0),
@@ -227,7 +296,7 @@ pub fn opt_bool(row: &Row<'_>, idx: impl rusqlite::RowIndex) -> rusqlite::Result
 }
 
 /// ISO string for a DateTime column (`null` when NULL).
-pub fn iso(row: &Row<'_>, idx: impl rusqlite::RowIndex) -> rusqlite::Result<serde_json::Value> {
+pub fn iso(row: &Row<'_>, idx: impl crate::sql::RowIndex) -> crate::sql::Result<serde_json::Value> {
     Ok(match opt_dt(row, idx)? {
         Some(ms) => serde_json::Value::String(crate::util::iso_from_ms(ms)),
         None => serde_json::Value::Null,
@@ -241,6 +310,6 @@ pub const fn dt_col(col: &'static str) -> &'static str {
     col
 }
 
-pub fn exists(c: &Connection, sql: &str, params: impl rusqlite::Params) -> rusqlite::Result<bool> {
+pub fn exists(c: &Connection, sql: &str, params: impl crate::sql::Params) -> crate::sql::Result<bool> {
     Ok(c.query_row(sql, params, |_| Ok(())).optional()?.is_some())
 }

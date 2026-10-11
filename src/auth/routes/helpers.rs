@@ -44,8 +44,8 @@ pub fn generate_temp_password() -> String {
 }
 
 /// findUserByIdentifier
-pub fn find_user_by_identifier(c: &rusqlite::Connection, identifier: &str) -> rusqlite::Result<Option<User>> {
-    use rusqlite::OptionalExtension;
+pub fn find_user_by_identifier(c: &crate::sql::Connection, identifier: &str) -> crate::sql::Result<Option<User>> {
+    use crate::sql::OptionalExtension;
     let trimmed = crate::security::js_trim(identifier);
     if trimmed.is_empty() {
         return Ok(None);
@@ -55,13 +55,13 @@ pub fn find_user_by_identifier(c: &rusqlite::Connection, identifier: &str) -> ru
     }
     c.query_row(
         &format!(r#"SELECT {USER_COLS} FROM "User" WHERE "username" = ?1 OR "email" = ?2 LIMIT 1"#),
-        rusqlite::params![trimmed, trimmed.to_lowercase()],
+        crate::sql::params![trimmed, trimmed.to_lowercase()],
         User::from_row,
     )
     .optional()
 }
 
-pub fn count_active_admins(c: &rusqlite::Connection) -> rusqlite::Result<i64> {
+pub fn count_active_admins(c: &crate::sql::Connection) -> crate::sql::Result<i64> {
     c.query_row(r#"SELECT COUNT(*) FROM "User" WHERE "role" = 'ADMIN' AND "isActive" = 1"#, [], |r| r.get(0))
 }
 

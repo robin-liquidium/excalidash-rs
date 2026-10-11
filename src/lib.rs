@@ -18,6 +18,7 @@ pub mod routes;
 pub mod s3;
 pub mod security;
 pub mod snapshots;
+pub mod sql;
 pub mod socket;
 pub mod sqlite_maintenance;
 pub mod state;

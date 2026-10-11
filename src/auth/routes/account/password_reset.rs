@@ -5,7 +5,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use rusqlite::OptionalExtension;
+use crate::sql::OptionalExtension;
 use serde_json::json;
 
 use super::common::*;
@@ -126,7 +126,7 @@ async fn process_reset_request(st: AppState, email: String, ip: Option<String>, 
             c.execute(r#"UPDATE "PasswordResetToken" SET "used" = 1 WHERE "userId" = ?1 AND "used" = 0"#, [&uid])?;
             c.execute(
                 r#"INSERT INTO "PasswordResetToken" ("id","userId","token","expiresAt","used","createdAt") VALUES (?1,?2,?3,?4,0,?5)"#,
-                rusqlite::params![util::uuid_v4(), uid, hashed, expires_at, now_ms()],
+                crate::sql::params![util::uuid_v4(), uid, hashed, expires_at, now_ms()],
             )?;
             Ok(())
         })
@@ -235,7 +235,7 @@ async fn confirm_reset(State(st): State<AppState>, ctx: Ctx, body: Body) -> Resp
                 .call(move |c| {
                     c.execute(
                         r#"UPDATE "User" SET "passwordHash" = ?1, "mustResetPassword" = 0, "updatedAt" = ?2 WHERE "id" = ?3"#,
-                        rusqlite::params![hash, now_ms(), uid],
+                        crate::sql::params![hash, now_ms(), uid],
                     )?;
                     Ok(())
                 })

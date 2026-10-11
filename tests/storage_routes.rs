@@ -28,7 +28,7 @@ fn create_drawing(s: &TestServer, user_id: &str, name: &str, elements: Value, fi
         .execute(
             r#"INSERT INTO "Drawing" ("id","name","elements","appState","files","userId","version","createdAt","updatedAt")
                VALUES (?1,?2,?3,'{}',?4,?5,?6,?7,?7)"#,
-            rusqlite::params![id, name, elements.to_string(), files.to_string(), user_id, version, now],
+            excalidash_rs::sql::params![id, name, elements.to_string(), files.to_string(), user_id, version, now],
         )
         .unwrap();
     id
@@ -47,7 +47,7 @@ fn insert_db_file(s: &TestServer, drawing: &str, file: &str, bytes: &[u8]) {
         .execute(
             r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt")
                VALUES (?1,?2,'image/png',?3,'db',NULL,?4,?5)"#,
-            rusqlite::params![drawing, file, bytes.len() as i64, bytes, chrono::Utc::now().timestamp_millis()],
+            excalidash_rs::sql::params![drawing, file, bytes.len() as i64, bytes, chrono::Utc::now().timestamp_millis()],
         )
         .unwrap();
 }
@@ -58,7 +58,7 @@ fn insert_snapshot(s: &TestServer, drawing: &str, elements: &str, files: &str) -
         .execute(
             r#"INSERT INTO "DrawingSnapshot" ("id","drawingId","version","elements","appState","files","createdAt")
                VALUES (?1,?2,1,?3,'{}',?4,?5)"#,
-            rusqlite::params![id, drawing, elements, files, chrono::Utc::now().timestamp_millis()],
+            excalidash_rs::sql::params![id, drawing, elements, files, chrono::Utc::now().timestamp_millis()],
         )
         .unwrap();
     id

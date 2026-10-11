@@ -131,7 +131,7 @@ async fn upload_file(
         let owner: Option<String> = st
             .db
             .call(move |c| {
-                use rusqlite::OptionalExtension;
+                use crate::sql::OptionalExtension;
                 Ok(c.query_row(r#"SELECT "userId" FROM "Drawing" WHERE "id" = ?1"#, [&did], |r| r.get(0))
                     .optional()?)
             })

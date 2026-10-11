@@ -11,7 +11,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use rusqlite::{Connection, OptionalExtension, Transaction};
+use crate::sql::{Connection, OptionalExtension, Transaction};
 use serde_json::{Map, Value};
 use std::{
     collections::HashSet,
@@ -84,6 +84,11 @@ impl From<ImportValidationError> for ImportError {
         ImportError::Validation(e)
     }
 }
+impl From<crate::sql::Error> for ImportError {
+    fn from(e: crate::sql::Error) -> Self {
+        ImportError::Other(e.to_string())
+    }
+}
 impl From<rusqlite::Error> for ImportError {
     fn from(e: rusqlite::Error) -> Self {
         ImportError::Other(e.to_string())
@@ -100,7 +105,7 @@ pub fn run_transaction<R>(
     c: &mut Connection,
     f: impl FnOnce(&Transaction<'_>) -> Result<R, ImportError>,
 ) -> Result<R, ImportError> {
-    let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let tx = c.transaction_with_behavior(crate::sql::TransactionBehavior::Immediate)?;
     let out = f(&tx)?;
     tx.commit()?;
     Ok(out)
@@ -366,7 +371,7 @@ pub fn assert_imported_files_available(
     let unique: HashSet<&String> = required.iter().collect();
     let placeholders = (0..unique.len()).map(|i| format!("?{}", i + 2)).collect::<Vec<_>>().join(",");
     let sql = format!(r#"SELECT COUNT(*) FROM "DrawingFile" WHERE "drawingId" = ?1 AND "fileId" IN ({placeholders})"#);
-    let mut params: Vec<&dyn rusqlite::ToSql> = vec![&drawing_id];
+    let mut params: Vec<&dyn crate::sql::ToSql> = vec![&drawing_id];
     for id in &unique {
         params.push(*id);
     }
@@ -388,7 +393,7 @@ pub struct ExistingDrawing {
     pub files: String,
 }
 
-pub fn find_existing_drawing(c: &Connection, id: &str) -> rusqlite::Result<Option<ExistingDrawing>> {
+pub fn find_existing_drawing(c: &Connection, id: &str) -> crate::sql::Result<Option<ExistingDrawing>> {
     c.query_row(
         r#"SELECT "id","userId","version","elements","appState","files" FROM "Drawing" WHERE "id" = ?1"#,
         [id],
@@ -423,7 +428,7 @@ pub fn replace_imported_drawing(tx: &Connection, existing: &ExistingDrawing, dat
     let now = crate::util::now_ms();
     tx.execute(
         r#"INSERT INTO "DrawingSnapshot" ("id","drawingId","version","elements","appState","files","createdAt") VALUES (?1,?2,?3,?4,?5,?6,?7)"#,
-        rusqlite::params![
+        crate::sql::params![
             crate::util::uuid_v4(),
             existing.id,
             existing.version,
@@ -434,8 +439,8 @@ pub fn replace_imported_drawing(tx: &Connection, existing: &ExistingDrawing, dat
         ],
     )?;
     let mut sets: Vec<String> = Vec::new();
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-    let mut push = |col: &str, v: Box<dyn rusqlite::ToSql>, sets: &mut Vec<String>| {
+    let mut params: Vec<Box<dyn crate::sql::ToSql>> = Vec::new();
+    let mut push = |col: &str, v: Box<dyn crate::sql::ToSql>, sets: &mut Vec<String>| {
         params.push(v);
         sets.push(format!(r#""{col}" = ?{}"#, params.len()));
     };
@@ -465,7 +470,7 @@ pub fn replace_imported_drawing(tx: &Connection, existing: &ExistingDrawing, dat
     params.push(Box::new(existing.id.clone()));
     params.push(Box::new(existing.user_id.clone()));
     params.push(Box::new(existing.version));
-    let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+    let refs: Vec<&dyn crate::sql::ToSql> = params.iter().map(|b| b.as_ref()).collect();
     let updated = tx.execute(&sql, refs.as_slice())?;
     if updated != 1 {
         return Err(ImportValidationError::with_status("Drawing changed during import; please try again", 409).into());
@@ -474,25 +479,25 @@ pub fn replace_imported_drawing(tx: &Connection, existing: &ExistingDrawing, dat
 }
 
 /// `prisma.collection.create({ data: { id, name, userId } })`
-pub fn create_collection(tx: &Connection, id: &str, name: &str, user_id: &str) -> rusqlite::Result<()> {
+pub fn create_collection(tx: &Connection, id: &str, name: &str, user_id: &str) -> crate::sql::Result<()> {
     let now = crate::util::now_ms();
     tx.execute(
         r#"INSERT INTO "Collection" ("id","name","userId","createdAt","updatedAt") VALUES (?1,?2,?3,?4,?4)"#,
-        rusqlite::params![id, name, user_id, now],
+        crate::sql::params![id, name, user_id, now],
     )?;
     Ok(())
 }
 
-pub fn rename_collection(tx: &Connection, id: &str, name: &str) -> rusqlite::Result<()> {
+pub fn rename_collection(tx: &Connection, id: &str, name: &str) -> crate::sql::Result<()> {
     tx.execute(
         r#"UPDATE "Collection" SET "name" = ?1, "updatedAt" = ?2 WHERE "id" = ?3"#,
-        rusqlite::params![name, crate::util::now_ms(), id],
+        crate::sql::params![name, crate::util::now_ms(), id],
     )?;
     Ok(())
 }
 
 /// Collection owner (`findUnique({ where: { id } })`).
-pub fn collection_owner(tx: &Connection, id: &str) -> rusqlite::Result<Option<String>> {
+pub fn collection_owner(tx: &Connection, id: &str) -> crate::sql::Result<Option<String>> {
     tx.query_row(r#"SELECT "userId" FROM "Collection" WHERE "id" = ?1"#, [id], |r| r.get(0)).optional()
 }
 
@@ -509,18 +514,18 @@ pub struct NewDrawing<'a> {
     pub collection_id: Option<&'a str>,
 }
 
-pub fn create_drawing(tx: &Connection, d: &NewDrawing<'_>) -> rusqlite::Result<()> {
+pub fn create_drawing(tx: &Connection, d: &NewDrawing<'_>) -> crate::sql::Result<()> {
     let now = crate::util::now_ms();
     tx.execute(
         r#"INSERT INTO "Drawing" ("id","name","elements","appState","files","preview","version","userId","collectionId","createdAt","updatedAt")
            VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)"#,
-        rusqlite::params![d.id, d.name, d.elements, d.app_state, d.files, d.preview, d.version, d.user_id, d.collection_id, now],
+        crate::sql::params![d.id, d.name, d.elements, d.app_state, d.files, d.preview, d.version, d.user_id, d.collection_id, now],
     )?;
     Ok(())
 }
 
 /// File ids already stored for a drawing (`knownFileIdsBeforeImport`).
-pub fn known_file_ids(c: &Connection, drawing_id: &str) -> rusqlite::Result<HashSet<String>> {
+pub fn known_file_ids(c: &Connection, drawing_id: &str) -> crate::sql::Result<HashSet<String>> {
     let mut st = c.prepare(r#"SELECT "fileId" FROM "DrawingFile" WHERE "drawingId" = ?1"#)?;
     let rows = st.query_map([drawing_id], |r| r.get::<_, String>(0))?;
     rows.collect()

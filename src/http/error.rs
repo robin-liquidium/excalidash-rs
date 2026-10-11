@@ -54,8 +54,8 @@ impl From<crate::db::DbError> for ApiError {
         ApiError::internal(e.to_string())
     }
 }
-impl From<rusqlite::Error> for ApiError {
-    fn from(e: rusqlite::Error) -> Self {
+impl From<crate::sql::Error> for ApiError {
+    fn from(e: crate::sql::Error) -> Self {
         ApiError::internal(e.to_string())
     }
 }

@@ -1,6 +1,6 @@
 //! collections.ts — collections CRUD and collection sharing.
 use axum::extract::{Path, State};
-use rusqlite::{Connection, OptionalExtension, Row};
+use crate::sql::{Connection, OptionalExtension, Row};
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 
@@ -15,7 +15,7 @@ use crate::trash::{ensure_trash_collection, is_trash_collection_id, user_trash_c
 
 const COLLECTION_COLS: &str = r#""id","name","userId","createdAt","updatedAt""#;
 
-fn collection_map(r: &Row<'_>, o: usize) -> rusqlite::Result<Map<String, Value>> {
+fn collection_map(r: &Row<'_>, o: usize) -> crate::sql::Result<Map<String, Value>> {
     let mut m = Map::new();
     m.insert("id".into(), json!(r.get::<_, String>(o)?));
     m.insert("name".into(), json!(r.get::<_, String>(o + 1)?));
@@ -25,7 +25,7 @@ fn collection_map(r: &Row<'_>, o: usize) -> rusqlite::Result<Map<String, Value>>
     Ok(m)
 }
 
-fn find_owned(c: &Connection, id: &str, user_id: &str) -> rusqlite::Result<Option<Map<String, Value>>> {
+fn find_owned(c: &Connection, id: &str, user_id: &str) -> crate::sql::Result<Option<Map<String, Value>>> {
     c.query_row(
         &format!(r#"SELECT {COLLECTION_COLS} FROM "Collection" WHERE "id" = ?1 AND "userId" = ?2 LIMIT 1"#),
         [id, user_id],
@@ -78,7 +78,7 @@ pub async fn list_collections(State(st): State<AppState>, ctx: Ctx) -> ApiResult
                     super::placeholders(1, ids.len())
                 );
                 let mut s = c.prepare(&sql)?;
-                s.query_map(rusqlite::params_from_iter(ids.iter()), |r| r.get(0))?.collect::<Result<_, _>>()?
+                s.query_map(crate::sql::params_from_iter(ids.iter()), |r| r.get(0))?.collect::<Result<_, _>>()?
             };
             let mut out: Vec<Value> = vec![];
             for mut m in raw {
@@ -137,7 +137,7 @@ pub async fn create_collection(State(st): State<AppState>, ctx: Ctx, body: Body)
             let now = crate::util::now_ms();
             c.execute(
                 r#"INSERT INTO "Collection" ("id","name","userId","createdAt","updatedAt") VALUES (?1,?2,?3,?4,?4)"#,
-                rusqlite::params![id, name, uid, now],
+                crate::sql::params![id, name, uid, now],
             )?;
             Ok(find_owned(c, &id, &uid)?.unwrap_or_default())
         })
@@ -162,7 +162,7 @@ pub async fn rename_collection(State(st): State<AppState>, ctx: Ctx, Path(id): P
         .call(move |c| {
             c.execute(
                 r#"UPDATE "Collection" SET "name" = ?1, "updatedAt" = ?2 WHERE "id" = ?3 AND "userId" = ?4"#,
-                rusqlite::params![name, crate::util::now_ms(), id, uid],
+                crate::sql::params![name, crate::util::now_ms(), id, uid],
             )?;
             Ok(find_owned(c, &id, &uid)?)
         })
@@ -185,7 +185,7 @@ pub async fn delete_collection(State(st): State<AppState>, ctx: Ctx, Path(id): P
         .tx(move |tx| {
             tx.execute(
                 r#"UPDATE "Drawing" SET "collectionId" = NULL, "updatedAt" = ?1 WHERE "collectionId" = ?2 AND "userId" = ?3"#,
-                rusqlite::params![crate::util::now_ms(), id2, uid],
+                crate::sql::params![crate::util::now_ms(), id2, uid],
             )?;
             tx.execute(r#"DELETE FROM "CollectionShare" WHERE "collectionId" = ?1"#, [&id2])?;
             tx.execute(r#"DELETE FROM "Collection" WHERE "id" = ?1 AND "userId" = ?2"#, [&id2, &uid])?;
@@ -208,7 +208,7 @@ pub async fn delete_collection(State(st): State<AppState>, ctx: Ctx, Path(id): P
 const SHARE_SELECT: &str = r#"SELECT s."id",s."collectionId",s."granteeUserId",s."role",s."createdByUserId",s."createdAt",s."updatedAt",u."id",u."name",u."email"
     FROM "CollectionShare" s JOIN "User" u ON u."id" = s."granteeUserId""#;
 
-fn share_json(r: &Row<'_>) -> rusqlite::Result<Value> {
+fn share_json(r: &Row<'_>) -> crate::sql::Result<Value> {
     Ok(json!({
         "id": r.get::<_, String>(0)?,
         "collectionId": r.get::<_, String>(1)?,
@@ -280,7 +280,7 @@ pub async fn upsert_share(State(st): State<AppState>, ctx: Ctx, Path(id): Path<S
                 r#"INSERT INTO "CollectionShare" ("id","collectionId","granteeUserId","role","createdByUserId","createdAt","updatedAt")
                    VALUES (?1,?2,?3,?4,?5,?6,?6)
                    ON CONFLICT("collectionId","granteeUserId") DO UPDATE SET "role" = excluded."role", "updatedAt" = excluded."updatedAt""#,
-                rusqlite::params![crate::util::uuid_v4(), id2, grantee, role, me, now],
+                crate::sql::params![crate::util::uuid_v4(), id2, grantee, role, me, now],
             )?;
             Ok(c.query_row(
                 &format!(r#"{SHARE_SELECT} WHERE s."collectionId" = ?1 AND s."granteeUserId" = ?2"#),
@@ -310,7 +310,7 @@ pub async fn update_share(
         .call(move |c| {
             Ok(c.execute(
                 r#"UPDATE "CollectionShare" SET "role" = ?1, "updatedAt" = ?2 WHERE "collectionId" = ?3 AND "granteeUserId" = ?4"#,
-                rusqlite::params![role, crate::util::now_ms(), id, grantee],
+                crate::sql::params![role, crate::util::now_ms(), id, grantee],
             )?)
         })
         .await?;
@@ -366,7 +366,7 @@ pub async fn share_resolve(State(st): State<AppState>, ctx: Ctx, Path(id): Path<
             params.push(like);
             let mut s = c.prepare(&sql)?;
             let rows: Vec<Value> = s
-                .query_map(rusqlite::params_from_iter(params.iter()), |r| {
+                .query_map(crate::sql::params_from_iter(params.iter()), |r| {
                     Ok(json!({"id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?, "email": r.get::<_, String>(2)?}))
                 })?
                 .collect::<Result<_, _>>()?;

@@ -124,11 +124,11 @@ async fn upsert_system_config(st: &AppState, column: &'static str, value: Option
             // Create with schema defaults when missing, then apply the update.
             c.execute(
                 r#"INSERT INTO "SystemConfig" ("id","createdAt","updatedAt") VALUES (?1,?2,?2) ON CONFLICT("id") DO NOTHING"#,
-                rusqlite::params![DEFAULT_SYSTEM_CONFIG_ID, now],
+                crate::sql::params![DEFAULT_SYSTEM_CONFIG_ID, now],
             )?;
             c.execute(
                 &format!(r#"UPDATE "SystemConfig" SET "{column}" = ?1, "updatedAt" = ?2 WHERE "id" = ?3"#),
-                rusqlite::params![value, now, DEFAULT_SYSTEM_CONFIG_ID],
+                crate::sql::params![value, now, DEFAULT_SYSTEM_CONFIG_ID],
             )?;
             Ok(SystemConfig::find(c)?.expect("system config row"))
         })
@@ -189,7 +189,7 @@ async fn put_login_rate_limit(State(st): State<AppState>, ctx: Ctx, body: Body) 
                 .call(move |c| {
                     let n = c.execute(
                         r#"UPDATE "SystemConfig" SET "authLoginRateLimitEnabled" = ?1, "authLoginRateLimitWindowMs" = ?2, "authLoginRateLimitMax" = ?3, "updatedAt" = ?4 WHERE "id" = ?5"#,
-                        rusqlite::params![enabled, window_ms, max, now_ms(), DEFAULT_SYSTEM_CONFIG_ID],
+                        crate::sql::params![enabled, window_ms, max, now_ms(), DEFAULT_SYSTEM_CONFIG_ID],
                     )?;
                     if n == 0 {
                         return Ok(None);
@@ -263,7 +263,7 @@ async fn update_admin_role(State(st): State<AppState>, ctx: Ctx, body: Body) -> 
                 .call(move |c| {
                     c.execute(
                         r#"UPDATE "User" SET "role" = ?1, "updatedAt" = ?2 WHERE "id" = ?3"#,
-                        rusqlite::params![role, now_ms(), id],
+                        crate::sql::params![role, now_ms(), id],
                     )?;
                     Ok(User::find_by_id(c, &id)?)
                 })
@@ -379,7 +379,7 @@ async fn create_user(State(st): State<AppState>, ctx: Ctx, body: Body) -> Respon
                     c.execute(
                         r#"INSERT INTO "User" ("id","username","email","passwordHash","name","role","mustResetPassword","isActive","preferences","createdAt","updatedAt")
                            VALUES (?1,?2,?3,?4,?5,?6,?7,?8,NULL,?9,?9)"#,
-                        rusqlite::params![id, username, email, password_hash, name, role, must_reset, is_active, now],
+                        crate::sql::params![id, username, email, password_hash, name, role, must_reset, is_active, now],
                     )?;
                     Ok(User::find_by_id(c, &id)?.expect("created user"))
                 })
@@ -438,8 +438,8 @@ async fn update_user(State(st): State<AppState>, ctx: Ctx, Path(id): Path<String
             if removing_admin && active_admins(&st).await? <= 1 {
                 return Err(conflict("There must be at least one active admin"));
             }
-            let mut sets: Vec<(&'static str, rusqlite::types::Value)> = vec![];
-            use rusqlite::types::Value as Sql;
+            let mut sets: Vec<(&'static str, crate::sql::types::Value)> = vec![];
+            use crate::sql::types::Value as Sql;
             if let Some(u) = username {
                 sets.push(("username", u.map(Sql::Text).unwrap_or(Sql::Null)));
             }
@@ -470,14 +470,12 @@ async fn update_user(State(st): State<AppState>, ctx: Ctx, Path(id): Path<String
                             n + 1,
                             n + 2
                         );
-                        let mut params: Vec<rusqlite::types::Value> = sets.into_iter().map(|(_, v)| v).collect();
+                        let mut params: Vec<crate::sql::types::Value> = sets.into_iter().map(|(_, v)| v).collect();
                         params.push(Sql::Integer(now_ms()));
                         params.push(Sql::Text(uid.clone()));
-                        if let Err(e) = c.execute(&sql, rusqlite::params_from_iter(params)) {
-                            if let rusqlite::Error::SqliteFailure(f, _) = &e {
-                                if f.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE {
-                                    return Ok(Err(()));
-                                }
+                        if let Err(e) = c.execute(&sql, crate::sql::params_from_iter(params)) {
+                            if e.is_unique_violation() {
+                                return Ok(Err(()));
                             }
                             return Err(e.into());
                         }
@@ -526,7 +524,7 @@ async fn reset_user_password(State(st): State<AppState>, ctx: Ctx, Path(id): Pat
                 .call(move |c| {
                     c.execute(
                         r#"UPDATE "User" SET "passwordHash" = ?1, "mustResetPassword" = 1, "isActive" = 1, "updatedAt" = ?2 WHERE "id" = ?3"#,
-                        rusqlite::params![hash, now_ms(), tid],
+                        crate::sql::params![hash, now_ms(), tid],
                     )?;
                     Ok(())
                 })

@@ -13,7 +13,7 @@ use axum::{
     routing::{get, patch, post, put, MethodRouter},
     Router,
 };
-use rusqlite::{Connection, OptionalExtension, Row};
+use crate::sql::{Connection, OptionalExtension, Row};
 use serde_json::{json, Map, Value};
 
 use crate::auth::middleware::OptionalAuth;
@@ -188,7 +188,7 @@ pub struct DrawingRow {
 
 impl DrawingRow {
     /// Reads DRAWING_COLS starting at column `o`.
-    pub fn from_row_at(r: &Row<'_>, o: usize) -> rusqlite::Result<DrawingRow> {
+    pub fn from_row_at(r: &Row<'_>, o: usize) -> crate::sql::Result<DrawingRow> {
         Ok(DrawingRow {
             id: r.get(o)?,
             name: r.get(o + 1)?,
@@ -204,7 +204,7 @@ impl DrawingRow {
         })
     }
 
-    pub fn find(c: &Connection, id: &str) -> rusqlite::Result<Option<DrawingRow>> {
+    pub fn find(c: &Connection, id: &str) -> crate::sql::Result<Option<DrawingRow>> {
         c.query_row(&format!(r#"SELECT {DRAWING_COLS} FROM "Drawing" WHERE "id" = ?1"#), [id], |r| {
             DrawingRow::from_row_at(r, 0)
         })

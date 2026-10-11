@@ -363,7 +363,7 @@ fn admin_reset_user_password() {
     db.execute(r#"UPDATE "User" SET "isActive" = 0, "username" = 'target' WHERE "id" = ?1"#, [&uid]).unwrap();
     db.execute(
         r#"INSERT INTO "RefreshToken" ("id","userId","token","expiresAt","revoked","createdAt") VALUES ('rt1',?1,'h1',?2,0,?3)"#,
-        rusqlite::params![uid, now + 100_000, now],
+        excalidash_rs::sql::params![uid, now + 100_000, now],
     )
     .unwrap();
 

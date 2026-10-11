@@ -186,7 +186,7 @@ fn api_key_authentication() {
     db.execute(
         r#"INSERT INTO "Drawing" ("id","name","elements","appState","files","version","userId","createdAt","updatedAt")
            VALUES ('legacy-drawing','Legacy token drawing','[]','{}','{}',1,?1,?2,?2)"#,
-        rusqlite::params![user_id, now],
+        excalidash_rs::sql::params![user_id, now],
     )
     .unwrap();
     let (legacy_id, legacy_token) = create_key(&user_c, "Legacy agent");
@@ -215,7 +215,7 @@ fn api_key_authentication() {
     }
 
     // rejects revoked API keys
-    db.execute(r#"UPDATE "ApiKey" SET "revokedAt" = ?1 WHERE "id" = ?2"#, rusqlite::params![now, key_id]).unwrap();
+    db.execute(r#"UPDATE "ApiKey" SET "revokedAt" = ?1 WHERE "id" = ?2"#, excalidash_rs::sql::params![now, key_id]).unwrap();
     let r = key.get("/auth/api-keys");
     assert_eq!(r.status, 401);
     assert_eq!(r.json()["message"], "Invalid or revoked API key");
@@ -224,7 +224,7 @@ fn api_key_authentication() {
     db.execute(
         r#"INSERT INTO "ApiKey" ("id","userId","name","keyId","tokenHash","prefix","scopes","createdAt","updatedAt")
            VALUES ('node-key',?1,'node',?2,?3,?4,'drawings:read,collections:read',?5,?5)"#,
-        rusqlite::params![user_id, NODE_KEY_ID, NODE_KEY_HASH, &NODE_KEY_TOKEN[..16], now],
+        excalidash_rs::sql::params![user_id, NODE_KEY_ID, NODE_KEY_HASH, &NODE_KEY_TOKEN[..16], now],
     )
     .unwrap();
     let r = bearer_client(&server, NODE_KEY_TOKEN).get("/auth/api-keys");
@@ -299,7 +299,7 @@ fn profile_and_email_updates() {
         .db()
         .execute(
             r#"INSERT INTO "RefreshToken" ("id","userId","token","expiresAt","revoked","createdAt") VALUES ('rt-old',?1,'old-hash',?2,0,?3)"#,
-            rusqlite::params![uid, now + 100_000, now],
+            excalidash_rs::sql::params![uid, now + 100_000, now],
         )
         .unwrap();
     let r = c.put("/auth/email", json!({ "email": "x@test.local" }));
@@ -524,7 +524,7 @@ fn password_reset_dev_flow() {
     let now = chrono::Utc::now().timestamp_millis();
     db.execute(
         r#"INSERT INTO "PasswordResetToken" ("id","userId","token","expiresAt","used","createdAt") VALUES ('expired',?1,?2,?3,0,?3)"#,
-        rusqlite::params![uid, hex_sha256("expired-token"), now - 1000],
+        excalidash_rs::sql::params![uid, hex_sha256("expired-token"), now - 1000],
     )
     .unwrap();
     let r = c.post("/auth/password-reset-confirm", json!({ "token": "expired-token", "password": "An0ther!Passw0rd" }));
@@ -534,7 +534,7 @@ fn password_reset_dev_flow() {
     // Inactive account
     db.execute(
         r#"INSERT INTO "PasswordResetToken" ("id","userId","token","expiresAt","used","createdAt") VALUES ('inactive',?1,?2,?3,0,?3)"#,
-        rusqlite::params![uid, hex_sha256("inactive-token"), now + 600_000],
+        excalidash_rs::sql::params![uid, hex_sha256("inactive-token"), now + 600_000],
     )
     .unwrap();
     db.execute(r#"UPDATE "User" SET "isActive" = 0 WHERE "id" = ?1"#, [&uid]).unwrap();

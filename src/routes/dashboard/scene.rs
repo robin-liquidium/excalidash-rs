@@ -1,6 +1,6 @@
 //! routes/dashboard/sceneUpdate.ts (applySceneUpdateTx) and
 //! routes/storage/retainedFiles.ts (collectRetainedDrawingFileIds).
-use rusqlite::{types::ToSql, Connection, TransactionBehavior};
+use crate::sql::{types::ToSql, Connection, TransactionBehavior};
 use serde_json::{Map, Value};
 use std::collections::HashSet;
 
@@ -130,7 +130,7 @@ fn attempt(c: &mut Connection, drawing_id: &str, guard: VersionGuard, m: &SceneM
     let now = crate::util::now_ms();
     tx.execute(
         r#"INSERT INTO "DrawingSnapshot" ("id","drawingId","version","elements","appState","files","createdAt") VALUES (?1,?2,?3,?4,?5,?6,?7)"#,
-        rusqlite::params![
+        crate::sql::params![
             crate::util::uuid_v4(),
             drawing_id,
             current.version,
@@ -199,7 +199,7 @@ pub async fn apply_scene_update(
 
 /// collectRetainedDrawingFileIds: file ids referenced by the live scene or any snapshot.
 /// `None` when any scene is unreadable.
-pub fn collect_retained_drawing_file_ids(c: &Connection, drawing_id: &str) -> rusqlite::Result<Option<HashSet<String>>> {
+pub fn collect_retained_drawing_file_ids(c: &Connection, drawing_id: &str) -> crate::sql::Result<Option<HashSet<String>>> {
     let mut scenes: Vec<(String, String)> = vec![];
     if let Some(cur) = c
         .query_row(r#"SELECT "elements","files" FROM "Drawing" WHERE "id" = ?1"#, [drawing_id], |r| {

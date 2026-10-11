@@ -23,6 +23,9 @@ pub struct TestServer {
     pub port: u16,
     pub dir: tempfile::TempDir,
     pub db_path: PathBuf,
+    /// DATABASE_URL the server runs on (a fresh PostgreSQL database when
+    /// `EXCALIDASH_TEST_PG` is set, else the SQLite file).
+    pub db_url: String,
     child: Option<Child>,
     output: Arc<Mutex<String>>,
 }
@@ -64,6 +67,23 @@ impl TestServer {
         env.insert("PORT".into(), port.to_string());
         env.insert("EXCALIDASH_BACKEND_ROOT".into(), dir.path().display().to_string());
         env.insert("DATABASE_URL".into(), format!("file:{}", db_path.display()));
+        // PostgreSQL mode: every server gets its own database (pre-seeded SQLite dirs stay SQLite).
+        if let Some(base) = std::env::var("EXCALIDASH_TEST_PG").ok().filter(|_| !db_path.exists()) {
+            // Restarts in the same dir reuse the database (the throwaway server is removed after the run).
+            let marker = dir.path().join(".pg-database");
+            let name = match std::fs::read_to_string(&marker) {
+                Ok(n) => n,
+                Err(_) => {
+                    let name = format!("t_{}", uuid::Uuid::new_v4().simple());
+                    let admin = excalidash_rs::sql::Connection::open_url(&format!("{base}/postgres?sslmode=disable")).expect("postgres admin");
+                    admin.execute_batch_raw(&format!("CREATE DATABASE \"{name}\"")).unwrap();
+                    std::fs::write(&marker, &name).unwrap();
+                    name
+                }
+            };
+            env.insert("DATABASE_URL".into(), format!("{base}/{name}?sslmode=disable"));
+            env.insert("DATABASE_PROVIDER".into(), "postgresql".into());
+        }
         for (k, v) in overrides {
             if v.is_empty() {
                 env.remove(*k);
@@ -100,7 +120,8 @@ impl TestServer {
             });
         }
         let url = format!("http://127.0.0.1:{port}");
-        let mut server = TestServer { url, port, dir, db_path, child: Some(child), output };
+        let db_url = env["DATABASE_URL"].clone();
+        let mut server = TestServer { url, port, dir, db_path, db_url, child: Some(child), output };
         let deadline = Instant::now() + Duration::from_secs(60);
         let probe = HttpClient::builder().timeout(Duration::from_millis(500)).build().unwrap();
         loop {
@@ -125,10 +146,12 @@ impl TestServer {
     }
 
     /// Direct DB handle (WAL lets tests read/write alongside the server).
-    pub fn db(&self) -> rusqlite::Connection {
-        let c = rusqlite::Connection::open(&self.db_path).unwrap();
-        c.busy_timeout(Duration::from_secs(10)).unwrap();
-        c.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    pub fn db(&self) -> excalidash_rs::sql::Connection {
+        let c = excalidash_rs::sql::Connection::open_url(&self.db_url).unwrap();
+        if !c.is_postgres() {
+            c.busy_timeout(Duration::from_secs(10)).unwrap();
+            c.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        }
         c
     }
 
@@ -352,7 +375,7 @@ pub fn seed_user(server: &TestServer, email: &str, name: &str, role: &str) -> St
         .execute(
             r#"INSERT INTO "User" ("id","username","email","passwordHash","name","role","mustResetPassword","isActive","createdAt","updatedAt")
                VALUES (?1,NULL,?2,?3,?4,?5,0,1,?6,?6)"#,
-            rusqlite::params![id, email.to_lowercase(), hash, name, role, now],
+            excalidash_rs::sql::params![id, email.to_lowercase(), hash, name, role, now],
         )
         .unwrap();
     id

@@ -101,13 +101,13 @@ pub async fn export_excalidash(State(st): State<AppState>, ctx: Ctx) -> ApiResul
                         updated_at: crate::db::dt(r, 8)?,
                     })
                 })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
+                .collect::<crate::sql::Result<Vec<_>>>()?;
             let mut s = c.prepare(r#"SELECT "id","name","createdAt","updatedAt" FROM "Collection" WHERE "userId" = ?1"#)?;
             let cols = s
                 .query_map([&uid], |r| {
                     Ok(CollectionRow { id: r.get(0)?, name: r.get(1)?, created_at: crate::db::dt(r, 2)?, updated_at: crate::db::dt(r, 3)? })
                 })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
+                .collect::<crate::sql::Result<Vec<_>>>()?;
             Ok((drawings, cols))
         })
         .await?;
@@ -122,7 +122,7 @@ pub async fn export_excalidash(State(st): State<AppState>, ctx: Ctx) -> ApiResul
         let trash = st
             .db
             .call(move |c| {
-                use rusqlite::OptionalExtension;
+                use crate::sql::OptionalExtension;
                 Ok(c.query_row(
                     r#"SELECT "id","name","createdAt","updatedAt" FROM "Collection" WHERE "userId" = ?1 AND "id" IN (?2, 'trash') LIMIT 1"#,
                     [&uid, &tid],
@@ -222,7 +222,7 @@ pub async fn export_excalidash(State(st): State<AppState>, ctx: Ctx) -> ApiResul
                             data: r.get(4)?,
                         })
                     })?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                    .collect::<crate::sql::Result<Vec<_>>>()?;
                 Ok(rows)
             })
             .await?;

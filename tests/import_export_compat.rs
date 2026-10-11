@@ -3,7 +3,7 @@
 mod common;
 
 use common::*;
-use rusqlite::types::Value as Sql;
+use excalidash_rs::sql::types::Value as Sql;
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -20,7 +20,7 @@ struct LegacyOpts {
 
 fn legacy_db(dir: &Path, opts: LegacyOpts) -> PathBuf {
     let path = dir.join(format!("legacy-export-{}.db", uuid::Uuid::new_v4()));
-    let db = rusqlite::Connection::open(&path).unwrap();
+    let db = excalidash_rs::sql::Connection::open(&path).unwrap();
     let (td, tc) = if opts.plural_lower { ("drawings", "collections") } else { ("Drawing", "Collection") };
     if opts.include_collections {
         db.execute_batch(&format!(
@@ -44,11 +44,11 @@ fn legacy_db(dir: &Path, opts: LegacyOpts) -> PathBuf {
            VALUES (?, ?, '[]', '{{}}', '{{}}', NULL, ?, ?, ?, ?, ?)"#
     );
     let (cid, cname) = if opts.include_collections { (Some("legacy-collection-1"), Some("Legacy Collection")) } else { (None, None) };
-    db.execute(&insert, rusqlite::params!["legacy-drawing-1", "Legacy Drawing 1", 1, cid, cname, now, now]).unwrap();
-    db.execute(&insert, rusqlite::params!["legacy-drawing-2", "Legacy Drawing 2 (unorganized)", 2, None::<&str>, None::<&str>, now, now])
+    db.execute(&insert, excalidash_rs::sql::params!["legacy-drawing-1", "Legacy Drawing 1", 1, cid, cname, now, now]).unwrap();
+    db.execute(&insert, excalidash_rs::sql::params!["legacy-drawing-2", "Legacy Drawing 2 (unorganized)", 2, None::<&str>, None::<&str>, now, now])
         .unwrap();
     if opts.include_trash_drawing {
-        db.execute(&insert, rusqlite::params!["legacy-drawing-trash", "Legacy Trash Drawing", 1, "trash", "Trash", now, now]).unwrap();
+        db.execute(&insert, excalidash_rs::sql::params!["legacy-drawing-trash", "Legacy Trash Drawing", 1, "trash", "Trash", now, now]).unwrap();
     }
     if opts.include_migrations_table {
         db.execute_batch(
@@ -71,7 +71,7 @@ fn prisma_legacy(dir: &Path) -> PathBuf {
 
 fn legacy_db_with_duplicate_ids(dir: &Path) -> PathBuf {
     let path = dir.join("legacy-duplicate-ids.db");
-    let db = rusqlite::Connection::open(&path).unwrap();
+    let db = excalidash_rs::sql::Connection::open(&path).unwrap();
     db.execute_batch(
         r#"CREATE TABLE "Drawing" (id TEXT, name TEXT NOT NULL, elements TEXT NOT NULL, appState TEXT NOT NULL, files TEXT, preview TEXT,
            version INTEGER, collectionId TEXT, collectionName TEXT, createdAt TEXT, updatedAt TEXT);
@@ -181,24 +181,22 @@ fn env() -> Env {
     Env { server, client, user, tmp: tempfile::tempdir().unwrap() }
 }
 
-fn row(db: &rusqlite::Connection, sql: &str, id: &str) -> Option<Vec<Sql>> {
+fn row(db: &excalidash_rs::sql::Connection, sql: &str, id: &str) -> Option<Vec<Sql>> {
     let mut st = db.prepare(sql).unwrap();
-    let n = st.column_count();
     let mut rows = st.query([id]).unwrap();
-    rows.next().unwrap().map(|r| (0..n).map(|i| r.get::<_, Sql>(i).unwrap()).collect())
+    rows.next().unwrap().map(|r| (0..r.column_count()).map(|i| r.get::<_, Sql>(i).unwrap()).collect())
 }
 
-fn drawing(db: &rusqlite::Connection, id: &str) -> Option<Vec<Sql>> {
+fn drawing(db: &excalidash_rs::sql::Connection, id: &str) -> Option<Vec<Sql>> {
     row(db, r#"SELECT * FROM "Drawing" WHERE "id" = ?1"#, id)
 }
 
-fn snapshots(db: &rusqlite::Connection, id: &str) -> Vec<Vec<Sql>> {
+fn snapshots(db: &excalidash_rs::sql::Connection, id: &str) -> Vec<Vec<Sql>> {
     let mut st = db.prepare(r#"SELECT * FROM "DrawingSnapshot" WHERE "drawingId" = ?1 ORDER BY "id""#).unwrap();
-    let n = st.column_count();
-    st.query_map([id], |r| Ok((0..n).map(|i| r.get::<_, Sql>(i).unwrap()).collect::<Vec<_>>())).unwrap().map(Result::unwrap).collect()
+    st.query_map([id], |r| Ok((0..r.column_count()).map(|i| r.get::<_, Sql>(i).unwrap()).collect::<Vec<_>>())).unwrap().map(Result::unwrap).collect()
 }
 
-fn file_data(db: &rusqlite::Connection, drawing_id: &str, file_id: &str) -> Option<Vec<u8>> {
+fn file_data(db: &excalidash_rs::sql::Connection, drawing_id: &str, file_id: &str) -> Option<Vec<u8>> {
     db.query_row(
         r#"SELECT "data" FROM "DrawingFile" WHERE "drawingId" = ?1 AND "fileId" = ?2"#,
         [drawing_id, file_id],
@@ -207,7 +205,7 @@ fn file_data(db: &rusqlite::Connection, drawing_id: &str, file_id: &str) -> Opti
     .ok()
 }
 
-fn count(db: &rusqlite::Connection, sql: &str) -> i64 {
+fn count(db: &excalidash_rs::sql::Connection, sql: &str) -> i64 {
     db.query_row(sql, [], |r| r.get(0)).unwrap()
 }
 
@@ -215,20 +213,20 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-fn insert_drawing(db: &rusqlite::Connection, id: &str, user: &str, name: &str, elements: &str, files: &str, version: i64) {
+fn insert_drawing(db: &excalidash_rs::sql::Connection, id: &str, user: &str, name: &str, elements: &str, files: &str, version: i64) {
     db.execute(
         r#"INSERT INTO "Drawing" ("id","name","elements","appState","files","version","userId","createdAt","updatedAt")
            VALUES (?1,?2,?3,'{}',?4,?5,?6,?7,?7)"#,
-        rusqlite::params![id, name, elements, files, version, user, now()],
+        excalidash_rs::sql::params![id, name, elements, files, version, user, now()],
     )
     .unwrap();
 }
 
-fn insert_file(db: &rusqlite::Connection, drawing_id: &str, file_id: &str, storage: &str, s3_key: Option<&str>, data: Option<&[u8]>, size: i64) {
+fn insert_file(db: &excalidash_rs::sql::Connection, drawing_id: &str, file_id: &str, storage: &str, s3_key: Option<&str>, data: Option<&[u8]>, size: i64) {
     db.execute(
         r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt")
            VALUES (?1,?2,'image/png',?3,?4,?5,?6,?7)"#,
-        rusqlite::params![drawing_id, file_id, size, storage, s3_key, data, now()],
+        excalidash_rs::sql::params![drawing_id, file_id, size, storage, s3_key, data, now()],
     )
     .unwrap();
 }
@@ -239,7 +237,7 @@ fn seed_existing(env: &Env, id: &str) {
     db.execute(
         r#"INSERT INTO "Drawing" ("id","name","elements","appState","files","version","userId","createdAt","updatedAt")
            VALUES (?1,'Keep this drawing',?2,?3,?4,7,?5,?6,?6)"#,
-        rusqlite::params![
+        excalidash_rs::sql::params![
             id,
             json!([{"id": "saved-element", "type": "rectangle", "x": 1, "y": 2, "width": 3, "height": 4}]).to_string(),
             json!({"viewBackgroundColor": "#fedcba"}).to_string(),
@@ -253,7 +251,7 @@ fn seed_existing(env: &Env, id: &str) {
     insert_file(&db, id, "saved-image", "db", None, Some(b"keep saved bytes"), 16);
     db.execute(
         r#"INSERT INTO "DrawingSnapshot" ("id","drawingId","version","elements","appState","files","createdAt") VALUES (?1,?2,6,'[]','{}','{}',?3)"#,
-        rusqlite::params![uuid::Uuid::new_v4().to_string(), id, now()],
+        excalidash_rs::sql::params![uuid::Uuid::new_v4().to_string(), id, now()],
     )
     .unwrap();
 }
@@ -357,7 +355,7 @@ fn supports_plural_lowercase_table_names() {
 fn verify_fails_without_drawing_table() {
     let e = env();
     let path = e.tmp.path().join("invalid.db");
-    rusqlite::Connection::open(&path).unwrap().execute_batch(r#"CREATE TABLE "NotDrawing" (id TEXT PRIMARY KEY NOT NULL);"#).unwrap();
+    excalidash_rs::sql::Connection::open(&path).unwrap().execute_batch(r#"CREATE TABLE "NotDrawing" (id TEXT PRIMARY KEY NOT NULL);"#).unwrap();
     let r = upload_file(&e.client, "/import/sqlite/legacy/verify", "db", &path);
     assert_eq!(r.status, 400);
     assert_eq!(r.json(), json!({"error": "Invalid legacy DB", "message": "Missing Drawing table"}));
@@ -449,7 +447,7 @@ fn rejects_malformed_legacy_json_before_overwriting() {
         let before = drawing(&db, "legacy-drawing-1").unwrap();
         let history = snapshots(&db, "legacy-drawing-1");
         let legacy = prisma_legacy(e.tmp.path());
-        rusqlite::Connection::open(&legacy)
+        excalidash_rs::sql::Connection::open(&legacy)
             .unwrap()
             .execute(&format!(r#"UPDATE "Drawing" SET "{field}" = ?1 WHERE id = ?2"#), ["{broken", "legacy-drawing-1"])
             .unwrap();

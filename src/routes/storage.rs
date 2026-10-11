@@ -7,7 +7,7 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
-use rusqlite::{Connection, OptionalExtension};
+use crate::sql::{Connection, OptionalExtension};
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 
@@ -27,7 +27,7 @@ const S3_DELETE_CONCURRENCY: usize = 8;
 /// `collectRetainedDrawingFileIds`: file ids referenced by the live scene or any
 /// retained snapshot. `None` when any scene is unreadable (keep everything).
 /// Call inside the cleanup transaction.
-pub fn collect_retained_drawing_file_ids(c: &Connection, drawing_id: &str) -> rusqlite::Result<Option<HashSet<String>>> {
+pub fn collect_retained_drawing_file_ids(c: &Connection, drawing_id: &str) -> crate::sql::Result<Option<HashSet<String>>> {
     let current: Option<(String, String)> = c
         .query_row(r#"SELECT "elements","files" FROM "Drawing" WHERE "id" = ?1"#, [drawing_id], |r| {
             Ok((r.get(0)?, r.get(1)?))
@@ -296,7 +296,7 @@ pub fn js_stringify(v: &Value) -> String {
     serde_json::to_string(&norm(v)).unwrap_or_default()
 }
 
-fn select_records(c: &Connection, drawing_id: &str) -> rusqlite::Result<Vec<StoredFileRecord>> {
+fn select_records(c: &Connection, drawing_id: &str) -> crate::sql::Result<Vec<StoredFileRecord>> {
     let mut stmt = c.prepare(
         r#"SELECT "fileId","storage","s3Key","mimeType","sizeBytes" FROM "DrawingFile" WHERE "drawingId" = ?1"#,
     )?;
@@ -312,7 +312,7 @@ fn select_records(c: &Connection, drawing_id: &str) -> rusqlite::Result<Vec<Stor
     rows.collect()
 }
 
-fn delete_rows(c: &Connection, drawing_id: &str, file_ids: &[String]) -> rusqlite::Result<()> {
+fn delete_rows(c: &Connection, drawing_id: &str, file_ids: &[String]) -> crate::sql::Result<()> {
     for fid in file_ids {
         c.execute(r#"DELETE FROM "DrawingFile" WHERE "drawingId" = ?1 AND "fileId" = ?2"#, [drawing_id, fid])?;
     }
@@ -320,11 +320,11 @@ fn delete_rows(c: &Connection, drawing_id: &str, file_ids: &[String]) -> rusqlit
 }
 
 /// Guarded scene write (`updateMany where {id, version}`); false on version conflict.
-fn guarded_update(c: &Connection, id: &str, version: i64, elements: &str, files: &str) -> rusqlite::Result<bool> {
+fn guarded_update(c: &Connection, id: &str, version: i64, elements: &str, files: &str) -> crate::sql::Result<bool> {
     let n = c.execute(
         r#"UPDATE "Drawing" SET "elements" = ?1, "files" = ?2, "version" = "version" + 1, "updatedAt" = ?3
            WHERE "id" = ?4 AND "version" = ?5"#,
-        rusqlite::params![elements, files, crate::util::now_ms(), id, version],
+        crate::sql::params![elements, files, crate::util::now_ms(), id, version],
     )?;
     Ok(n > 0)
 }

@@ -186,7 +186,7 @@ pub async fn issue_session(
             .call(move |c| {
                 c.execute(
                     r#"INSERT INTO "RefreshToken" ("id","userId","token","expiresAt","revoked","createdAt") VALUES (?1,?2,?3,?4,0,?5)"#,
-                    rusqlite::params![util::uuid_v4(), uid, token, expires, util::now_ms()],
+                    crate::sql::params![util::uuid_v4(), uid, token, expires, util::now_ms()],
                 )?;
                 Ok(())
             })

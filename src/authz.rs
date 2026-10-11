@@ -1,5 +1,5 @@
 //! authz/sharing.ts — drawing access resolution (owner / ACL / collection / link policy).
-use rusqlite::{Connection, OptionalExtension};
+use crate::sql::{Connection, OptionalExtension};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
@@ -77,7 +77,7 @@ pub fn get_drawing_access(
     principal: Option<&str>,
     drawing_id: &str,
     now_ms: Option<i64>,
-) -> rusqlite::Result<Access> {
+) -> crate::sql::Result<Access> {
     let now_ms = now_ms.unwrap_or_else(crate::util::now_ms);
     let mut base = Access::None;
     if let Some(user_id) = principal {
@@ -124,13 +124,13 @@ pub fn get_drawing_access(
     Ok(base.max(link.unwrap_or(Access::None)))
 }
 
-fn active_link_share_access(c: &Connection, drawing_id: &str, now_ms: i64) -> rusqlite::Result<Option<Access>> {
+fn active_link_share_access(c: &Connection, drawing_id: &str, now_ms: i64) -> crate::sql::Result<Option<Access>> {
     let perm: Option<String> = c
         .query_row(
             r#"SELECT "permission" FROM "DrawingLinkShare"
                WHERE "drawingId" = ?1 AND "revokedAt" IS NULL AND ("expiresAt" IS NULL OR "expiresAt" > ?2)
                ORDER BY "createdAt" DESC LIMIT 1"#,
-            rusqlite::params![drawing_id, now_ms],
+            crate::sql::params![drawing_id, now_ms],
             |r| r.get(0),
         )
         .optional()?;

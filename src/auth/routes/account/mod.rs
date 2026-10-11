@@ -9,7 +9,7 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use rusqlite::OptionalExtension;
+use crate::sql::OptionalExtension;
 use serde_json::{json, Map, Value};
 
 use self::common::*;
@@ -57,7 +57,7 @@ pub(crate) use guarded;
 // ---------------------------------------------------------------------------
 // API keys
 
-fn api_key_json(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+fn api_key_json(r: &crate::sql::Row<'_>) -> crate::sql::Result<Value> {
     let scopes: Option<String> = r.get(3)?;
     Ok(json!({
         "id": r.get::<_, String>(0)?,
@@ -155,7 +155,7 @@ async fn create_api_key(State(st): State<AppState>, ctx: Ctx, body: Body) -> Res
                     c.execute(
                         r#"INSERT INTO "ApiKey" ("id","userId","name","keyId","tokenHash","prefix","scopes","drawingId","lastUsedAt","revokedAt","createdAt","updatedAt")
                            VALUES (?1,?2,?3,?4,?5,?6,?7,NULL,NULL,NULL,?8,?8)"#,
-                        rusqlite::params![id, uid, name, key_id, token_hash, prefix, serialize_scopes(&scopes), now],
+                        crate::sql::params![id, uid, name, key_id, token_hash, prefix, serialize_scopes(&scopes), now],
                     )?;
                     Ok(c.query_row(&format!(r#"SELECT {API_KEY_COLS} FROM "ApiKey" WHERE "id" = ?1"#), [&id], api_key_json)?)
                 })
@@ -184,7 +184,7 @@ async fn revoke_api_key(State(st): State<AppState>, ctx: Ctx, Path(id): Path<Str
                     let row = c
                         .query_row(
                             r#"SELECT "id","revokedAt" FROM "ApiKey" WHERE "id" = ?1 AND "userId" = ?2 LIMIT 1"#,
-                            rusqlite::params![id, uid],
+                            crate::sql::params![id, uid],
                             |r| Ok((r.get::<_, String>(0)?, crate::db::opt_dt(r, 1)?)),
                         )
                         .optional()?;
@@ -192,7 +192,7 @@ async fn revoke_api_key(State(st): State<AppState>, ctx: Ctx, Path(id): Path<Str
                         let now = now_ms();
                         c.execute(
                             r#"UPDATE "ApiKey" SET "revokedAt" = ?1, "updatedAt" = ?1 WHERE "id" = ?2"#,
-                            rusqlite::params![now, id],
+                            crate::sql::params![now, id],
                         )?;
                     }
                     Ok(row.map(|r| r.0))
@@ -292,7 +292,7 @@ async fn put_preferences(State(st): State<AppState>, ctx: Ctx, body: Body) -> Re
                 .call(move |c| {
                     Ok(c.execute(
                         r#"UPDATE "User" SET "preferences" = ?1, "updatedAt" = ?2 WHERE "id" = ?3"#,
-                        rusqlite::params![serialized, now_ms(), uid],
+                        crate::sql::params![serialized, now_ms(), uid],
                     )?)
                 })
                 .await?;
@@ -331,7 +331,7 @@ async fn put_profile(State(st): State<AppState>, ctx: Ctx, body: Body) -> Respon
                 .call(move |c| {
                     let n = c.execute(
                         r#"UPDATE "User" SET "name" = ?1, "updatedAt" = ?2 WHERE "id" = ?3"#,
-                        rusqlite::params![name, now_ms(), uid],
+                        crate::sql::params![name, now_ms(), uid],
                     )?;
                     if n == 0 {
                         return Ok(None);
@@ -419,7 +419,7 @@ async fn put_email(State(st): State<AppState>, ctx: Ctx, body: Body) -> Response
                 .call(move |c| {
                     c.execute(
                         r#"UPDATE "User" SET "email" = ?1, "updatedAt" = ?2 WHERE "id" = ?3"#,
-                        rusqlite::params![e, now_ms(), uid],
+                        crate::sql::params![e, now_ms(), uid],
                     )?;
                     Ok(crate::models::User::find_by_id(c, &uid)?)
                 })
@@ -490,7 +490,7 @@ async fn set_password(st: &AppState, user_id: &str, hash: String) -> Result<Opti
         .call(move |c| {
             let n = c.execute(
                 r#"UPDATE "User" SET "passwordHash" = ?1, "mustResetPassword" = 0, "updatedAt" = ?2 WHERE "id" = ?3"#,
-                rusqlite::params![hash, now_ms(), uid],
+                crate::sql::params![hash, now_ms(), uid],
             )?;
             if n == 0 {
                 return Ok(None);

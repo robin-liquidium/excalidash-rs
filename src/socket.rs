@@ -112,7 +112,7 @@ async fn socket_auth_user_id(st: &AppState, token: Option<String>) -> Option<Str
     let found = st
         .db
         .call(move |c| {
-            use rusqlite::OptionalExtension;
+            use crate::sql::OptionalExtension;
             Ok(c
                 .query_row(r#"SELECT "id","isActive" FROM "User" WHERE "id" = ?1"#, [&uid], |r| {
                     Ok((r.get::<_, String>(0)?, crate::db::boolean(r, 1)?))
@@ -251,7 +251,7 @@ async fn on_connect(s: SocketRef, io: SocketIo) {
                     let account = app()
                         .db
                         .call(move |c| {
-                            use rusqlite::OptionalExtension;
+                            use crate::sql::OptionalExtension;
                             Ok(c
                                 .query_row(r#"SELECT "id","name" FROM "User" WHERE "id" = ?1"#, [&uid], |r| {
                                     Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))

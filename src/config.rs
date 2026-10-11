@@ -149,7 +149,8 @@ pub struct Config {
     pub is_production: bool,
     /// Normalized `file:/abs/path` URL (SQLite only in this build).
     pub database_url: String,
-    pub database_path: PathBuf,
+    /// SQLite file (None for PostgreSQL).
+    pub database_path: Option<PathBuf>,
     pub frontend_url: Option<String>,
     pub allowed_origins: Vec<String>,
     pub trust_proxy: TrustProxy,
@@ -339,16 +340,21 @@ pub fn normalize_origins(raw: Option<&str>) -> Vec<String> {
     }
 }
 
-pub fn resolve_database_url(backend_root: &Path, raw: Option<String>) -> Result<(String, PathBuf), String> {
+pub fn resolve_database_url(backend_root: &Path, raw: Option<String>) -> Result<(String, Option<PathBuf>), String> {
     let default_path = backend_root.join("prisma/dev.db");
     let raw = match raw {
         Some(r) if !r.trim().is_empty() => r,
-        _ => return Ok((format!("file:{}", default_path.display()), default_path)),
+        _ => return Ok((format!("file:{}", default_path.display()), Some(default_path))),
     };
     let Some(file_path) = raw.strip_prefix("file:") else {
+        #[cfg(feature = "postgres")]
+        if crate::sql::pg::is_postgres_url(&raw) {
+            return Ok((raw, None));
+        }
         return Err(format!(
-            "DATABASE_URL '{}' is not supported by this build: only SQLite (file:) databases are supported",
-            redact_database_url(&raw)
+            "DATABASE_URL '{}' is not supported by this build: only {} databases are supported",
+            redact_database_url(&raw),
+            if cfg!(feature = "postgres") { "SQLite (file:) and PostgreSQL (postgresql://)" } else { "SQLite (file:)" }
         ));
     };
     let prisma_dir = backend_root.join("prisma");
@@ -361,7 +367,7 @@ pub fn resolve_database_url(backend_root: &Path, raw: Option<String>) -> Result<
     } else {
         normalize_path(&prisma_dir.join(normalized_relative))
     };
-    Ok((format!("file:{}", abs.display()), abs))
+    Ok((format!("file:{}", abs.display()), Some(abs)))
 }
 
 fn normalize_path(p: &Path) -> PathBuf {

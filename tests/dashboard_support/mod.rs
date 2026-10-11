@@ -52,7 +52,7 @@ pub fn insert_drawing(s: &TestServer, user_id: &str, d: NewDrawing<'_>) -> Strin
         .execute(
             r#"INSERT INTO "Drawing" ("id","name","elements","appState","files","preview","version","userId","collectionId","createdAt","updatedAt")
                VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)"#,
-            rusqlite::params![
+            excalidash_rs::sql::params![
                 id,
                 if d.name.is_empty() { "Drawing" } else { d.name },
                 d.elements.unwrap_or("[]"),
@@ -79,7 +79,7 @@ pub fn insert_collection(s: &TestServer, user_id: &str, name: &str) -> String {
     s.db()
         .execute(
             r#"INSERT INTO "Collection" ("id","name","userId","createdAt","updatedAt") VALUES (?1,?2,?3,?4,?4)"#,
-            rusqlite::params![id, name, user_id, now],
+            excalidash_rs::sql::params![id, name, user_id, now],
         )
         .unwrap();
     id
@@ -92,7 +92,7 @@ pub fn insert_permission(s: &TestServer, drawing_id: &str, grantee: &str, permis
         .execute(
             r#"INSERT INTO "DrawingPermission" ("id","drawingId","granteeUserId","permission","hidden","createdByUserId","createdAt","updatedAt")
                VALUES (?1,?2,?3,?4,0,?5,?6,?6)"#,
-            rusqlite::params![id, drawing_id, grantee, permission, created_by, now],
+            excalidash_rs::sql::params![id, drawing_id, grantee, permission, created_by, now],
         )
         .unwrap();
     id
@@ -104,7 +104,7 @@ pub fn insert_collection_share(s: &TestServer, collection_id: &str, grantee: &st
         .execute(
             r#"INSERT INTO "CollectionShare" ("id","collectionId","granteeUserId","role","createdByUserId","createdAt","updatedAt")
                VALUES (?1,?2,?3,?4,?5,?6,?6)"#,
-            rusqlite::params![uuid::Uuid::new_v4().to_string(), collection_id, grantee, role, created_by, now],
+            excalidash_rs::sql::params![uuid::Uuid::new_v4().to_string(), collection_id, grantee, role, created_by, now],
         )
         .unwrap();
 }
@@ -114,7 +114,7 @@ pub fn insert_snapshot(s: &TestServer, drawing_id: &str, version: i64, elements:
     s.db()
         .execute(
             r#"INSERT INTO "DrawingSnapshot" ("id","drawingId","version","elements","appState","files","createdAt") VALUES (?1,?2,?3,?4,?5,?6,?7)"#,
-            rusqlite::params![id, drawing_id, version, elements, app_state, files, now_ms()],
+            excalidash_rs::sql::params![id, drawing_id, version, elements, app_state, files, now_ms()],
         )
         .unwrap();
     id
@@ -124,14 +124,14 @@ pub fn insert_db_file(s: &TestServer, drawing_id: &str, file_id: &str, bytes: &[
     s.db()
         .execute(
             r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt") VALUES (?1,?2,'image/png',?3,'db',NULL,?4,?5)"#,
-            rusqlite::params![drawing_id, file_id, bytes.len() as i64, bytes, now_ms()],
+            excalidash_rs::sql::params![drawing_id, file_id, bytes.len() as i64, bytes, now_ms()],
         )
         .unwrap();
 }
 
 /// Full Drawing row as (name, elements, appState, files, preview, version, collectionId, updatedAt).
 pub fn drawing_row(s: &TestServer, id: &str) -> Option<(String, String, String, String, Option<String>, i64, Option<String>, i64)> {
-    use rusqlite::OptionalExtension;
+    use excalidash_rs::sql::OptionalExtension;
     s.db()
         .query_row(
             r#"SELECT "name","elements","appState","files","preview","version","collectionId","updatedAt" FROM "Drawing" WHERE "id" = ?1"#,

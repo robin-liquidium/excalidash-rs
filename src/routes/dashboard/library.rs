@@ -1,6 +1,6 @@
 //! library.ts — per-user Excalidraw library.
 use axum::extract::State;
-use rusqlite::OptionalExtension;
+use crate::sql::OptionalExtension;
 use serde_json::{json, Value};
 
 use super::{err_only, parse_json_field};
@@ -41,7 +41,7 @@ pub async fn put_library(State(st): State<AppState>, ctx: Ctx, body: Body) -> Ap
             c.execute(
                 r#"INSERT INTO "Library" ("id","items","createdAt","updatedAt") VALUES (?1,?2,?3,?3)
                    ON CONFLICT("id") DO UPDATE SET "items" = excluded."items", "updatedAt" = excluded."updatedAt""#,
-                rusqlite::params![id, raw, now],
+                crate::sql::params![id, raw, now],
             )?;
             Ok(c.query_row(r#"SELECT "items" FROM "Library" WHERE "id" = ?1"#, [&id], |r| r.get(0))?)
         })

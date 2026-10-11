@@ -1,6 +1,6 @@
 //! drawingReadRoutes.ts, drawingCreateUpdateRoutes.ts, drawingDeleteDuplicateRoutes.ts.
 use axum::extract::{Path, State};
-use rusqlite::OptionalExtension;
+use crate::sql::OptionalExtension;
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 
@@ -159,7 +159,7 @@ pub async fn create_drawing(State(st): State<AppState>, ctx: Ctx, body: Body) ->
             c.execute(
                 r#"INSERT INTO "Drawing" ("id","name","elements","appState","files","preview","version","userId","collectionId","createdAt","updatedAt")
                    VALUES (?1,?2,?3,?4,?5,?6,1,?7,?8,?9,?9)"#,
-                rusqlite::params![nid, name, elements, app_state, files, preview, uid, cid, now],
+                crate::sql::params![nid, name, elements, app_state, files, preview, uid, cid, now],
             )?;
             Ok(DrawingRow::find(c, &nid)?)
         })
@@ -316,13 +316,13 @@ pub async fn update_drawing(State(st): State<AppState>, ctx: Ctx, Path(id): Path
         let row = st
             .db
             .call(move |c| {
-                let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![];
+                let mut params: Vec<Box<dyn crate::sql::types::ToSql>> = vec![];
                 let mut sets = data.sets(&mut params);
                 params.push(Box::new(crate::util::now_ms()));
                 sets.push(format!(r#""updatedAt" = ?{}"#, params.len()));
                 params.push(Box::new(id2.clone()));
                 let sql = format!(r#"UPDATE "Drawing" SET {} WHERE "id" = ?{}"#, sets.join(", "), params.len());
-                let refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+                let refs: Vec<&dyn crate::sql::types::ToSql> = params.iter().map(|b| b.as_ref()).collect();
                 if c.execute(&sql, refs.as_slice())? == 0 {
                     return Ok(None);
                 }
@@ -517,7 +517,7 @@ async fn clone_file_references(
                             r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt")
                                VALUES (?1,?2,?3,?4,'s3',?5,NULL,?6)
                                ON CONFLICT("drawingId","fileId") DO UPDATE SET "storage"='s3',"s3Key"=excluded."s3Key","data"=NULL,"mimeType"=excluded."mimeType","sizeBytes"=excluded."sizeBytes""#,
-                            rusqlite::params![t, fid, mime, size, key, crate::util::now_ms()],
+                            crate::sql::params![t, fid, mime, size, key, crate::util::now_ms()],
                         )?;
                         Ok(())
                     })
@@ -535,7 +535,7 @@ async fn clone_file_references(
                             r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt")
                                SELECT ?1,"fileId","mimeType","sizeBytes",'db',NULL,"data",?4 FROM "DrawingFile" WHERE "drawingId" = ?2 AND "fileId" = ?3
                                ON CONFLICT("drawingId","fileId") DO UPDATE SET "storage"='db',"s3Key"=NULL,"data"=excluded."data","mimeType"=excluded."mimeType","sizeBytes"=excluded."sizeBytes""#,
-                            rusqlite::params![t, s, fid, crate::util::now_ms()],
+                            crate::sql::params![t, s, fid, crate::util::now_ms()],
                         )?;
                         Ok(())
                     })
@@ -583,7 +583,7 @@ pub async fn duplicate_drawing(State(st): State<AppState>, ctx: Ctx, Path(id): P
             c.execute(
                 r#"INSERT INTO "Drawing" ("id","name","elements","appState","files","preview","version","userId","collectionId","createdAt","updatedAt")
                    VALUES (?1,?2,?3,?4,?5,?6,1,?7,?8,?9,?9)"#,
-                rusqlite::params![nid, name, original.elements, original.app_state, files, preview, uid, dup_cid, now],
+                crate::sql::params![nid, name, original.elements, original.app_state, files, preview, uid, dup_cid, now],
             )?;
             Ok(DrawingRow::find(c, &nid)?)
         })

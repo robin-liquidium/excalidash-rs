@@ -29,7 +29,7 @@ fn writes_scheduled_private_independent_backups() {
         .execute(
             r#"INSERT INTO "Drawing" ("id","name","elements","appState","files","version","userId","createdAt","updatedAt")
                VALUES ('backup-drawing','Backup drawing','[]','{}','{}',1,?1,?2,?2)"#,
-            rusqlite::params![user, now],
+            excalidash_rs::sql::params![user, now],
         )
         .unwrap();
     let out = server.output();

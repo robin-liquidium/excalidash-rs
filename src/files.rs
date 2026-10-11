@@ -1,7 +1,7 @@
 //! fileProcessing.ts + drawingFileStore.ts — image blob interning and the
 //! immutable DrawingFile store (S3 objects or inline database bytes).
 use base64::Engine;
-use rusqlite::{Connection, OptionalExtension};
+use crate::sql::{Connection, OptionalExtension};
 use serde_json::{Map, Value};
 
 use crate::db::{Db, DbError};
@@ -109,7 +109,7 @@ pub struct FileContent {
     pub data: Option<Vec<u8>>,
 }
 
-pub fn find_drawing_file(c: &Connection, drawing_id: &str, file_id: &str) -> rusqlite::Result<Option<DrawingFileRow>> {
+pub fn find_drawing_file(c: &Connection, drawing_id: &str, file_id: &str) -> crate::sql::Result<Option<DrawingFileRow>> {
     c.query_row(
         r#"SELECT "drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt"
            FROM "DrawingFile" WHERE "drawingId" = ?1 AND "fileId" = ?2"#,
@@ -138,7 +138,7 @@ pub fn store_drawing_file_once(c: &Connection, content: &FileContent) -> Result<
         r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt")
            VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
            ON CONFLICT ("drawingId","fileId") DO UPDATE SET "fileId" = excluded."fileId""#,
-        rusqlite::params![
+        crate::sql::params![
             content.drawing_id,
             content.file_id,
             content.mime_type,
@@ -150,7 +150,7 @@ pub fn store_drawing_file_once(c: &Connection, content: &FileContent) -> Result<
         ],
     )?;
     let stored = find_drawing_file(c, &content.drawing_id, &content.file_id)?
-        .ok_or(DbError::Sqlite(rusqlite::Error::QueryReturnedNoRows))?;
+        .ok_or(DbError::Sql(crate::sql::Error::QueryReturnedNoRows))?;
     if stored.has_content() {
         return Ok(stored);
     }
@@ -159,7 +159,7 @@ pub fn store_drawing_file_once(c: &Connection, content: &FileContent) -> Result<
                "storage" = ?5, "s3Key" = ?6, "data" = ?7
            WHERE "drawingId" = ?1 AND "fileId" = ?2 AND (
                ("storage" = 'db' AND "data" IS NULL) OR ("storage" = 's3' AND "s3Key" IS NULL) OR ("storage" = 's3' AND "s3Key" = ''))"#,
-        rusqlite::params![
+        crate::sql::params![
             content.drawing_id,
             content.file_id,
             content.mime_type,
@@ -169,7 +169,7 @@ pub fn store_drawing_file_once(c: &Connection, content: &FileContent) -> Result<
             content.data
         ],
     )?;
-    find_drawing_file(c, &content.drawing_id, &content.file_id)?.ok_or(DbError::Sqlite(rusqlite::Error::QueryReturnedNoRows))
+    find_drawing_file(c, &content.drawing_id, &content.file_id)?.ok_or(DbError::Sql(crate::sql::Error::QueryReturnedNoRows))
 }
 
 /// `cleanupUnusedS3Upload`: reclaim only this request's fresh generation when another row won.
@@ -363,13 +363,13 @@ mod tests {
         c.execute(
             r#"INSERT INTO "User" ("id","email","passwordHash","name","role","mustResetPassword","isActive","createdAt","updatedAt")
                VALUES (?1,?2,'unused','Owner','USER',0,1,?3,?3)"#,
-            rusqlite::params![uid, format!("{uid}@test.local"), now],
+            crate::sql::params![uid, format!("{uid}@test.local"), now],
         )
         .unwrap();
         c.execute(
             r#"INSERT INTO "Drawing" ("id","name","elements","appState","files","userId","version","createdAt","updatedAt")
                VALUES (?1,'Retention','[]','{}','{}',?2,1,?3,?3)"#,
-            rusqlite::params![did, uid, now],
+            crate::sql::params![did, uid, now],
         )
         .unwrap();
         (uid, did)
@@ -381,7 +381,7 @@ mod tests {
             .execute(
                 r#"INSERT INTO "DrawingFile" ("drawingId","fileId","mimeType","sizeBytes","storage","s3Key","data","createdAt")
                    VALUES (?1,?2,'image/png',?3,?4,?5,?6,?7)"#,
-                rusqlite::params![did, fid, data.map(|d| d.len() as i64).unwrap_or(0), storage, s3_key, data, crate::util::now_ms()],
+                crate::sql::params![did, fid, data.map(|d| d.len() as i64).unwrap_or(0), storage, s3_key, data, crate::util::now_ms()],
             )
             .unwrap();
     }

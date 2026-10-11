@@ -171,7 +171,7 @@ async fn authenticate_api_key(db: &Db, token: String) -> Result<Option<ApiKeyAut
     let Some(key_id) = extract_api_key_id(&token) else { return Ok(None) };
     let found = db
         .call(move |c| {
-            use rusqlite::OptionalExtension;
+            use crate::sql::OptionalExtension;
             let row = c
                 .query_row(
                     r#"SELECT "id","tokenHash","scopes","drawingId","revokedAt","userId" FROM "ApiKey" WHERE "keyId" = ?1"#,
@@ -210,7 +210,7 @@ async fn authenticate_api_key(db: &Db, token: String) -> Result<Option<ApiKeyAut
     let now = crate::util::now_ms();
     if let Err(e) = db
         .call(move |c| {
-            c.execute(r#"UPDATE "ApiKey" SET "lastUsedAt" = ?1, "updatedAt" = ?1 WHERE "id" = ?2"#, rusqlite::params![now, id])?;
+            c.execute(r#"UPDATE "ApiKey" SET "lastUsedAt" = ?1, "updatedAt" = ?1 WHERE "id" = ?2"#, crate::sql::params![now, id])?;
             Ok(())
         })
         .await
@@ -264,7 +264,7 @@ async fn reconcile_role(db: &Db, payload: &JwtPayload, user: User) -> Result<Use
         .call(move |c| {
             c.execute(
                 r#"UPDATE "User" SET "role" = ?1, "updatedAt" = ?2 WHERE "id" = ?3"#,
-                rusqlite::params![role, crate::util::now_ms(), id],
+                crate::sql::params![role, crate::util::now_ms(), id],
             )?;
             Ok(c.query_row(&format!(r#"SELECT {USER_COLS} FROM "User" WHERE "id" = ?1"#), [&id], User::from_row)?)
         })
