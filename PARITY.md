@@ -91,7 +91,7 @@ Status legend: ✅ ported + tested · ⚠️ ported with a documented deviation 
 | XSS sanitisation (DOMPurify → ammonia), zod element/appState schemas, file dataURL rules | security.ts | src/security.rs | ⚠️ | security::tests, dashboard_drawings::sanitizer_* |
 | Snapshot codec (brotli `br1:`) | snapshots/snapshotCodec.ts | src/snapshots.rs | ✅ | snapshots::tests (unit) |
 | Drawing access (owner/ACL/collection/link policy) | authz/sharing.ts | src/authz.rs | ✅ | dashboard_collections, dashboard_link_sharing |
-| Socket.IO collab (join-room, cursor-move, element-update, user-activity, presence, revalidation) | server/socket.ts, server/socketAccess.ts | src/socket.rs | ✅ | dashboard_scene (broadcast), e2e collaboration.spec / image-collab.spec |
+| Socket.IO collab (join-room, cursor-move, element-update, user-activity, presence, revalidation; per-socket in-order event handling like Node's event loop; engine.io CORS/preflight) | server/socket.ts, server/socketAccess.ts, index.ts (io cors) | src/socket.rs, src/http/mod.rs (outer_layer) | ✅ | dashboard_scene (broadcast), e2e collaboration.spec / image-collab.spec (25/25 with --repeat-each=5, no retries), tests/diff socket.io steps |
 | Drawings list cache (LRU, TTL, per-user invalidation) | server/drawingsCache.ts | src/drawings_cache.rs | ✅ | dashboard_drawings::drawings_cache_keys_are_user_scoped |
 | Audit log | utils/audit.ts | src/audit.rs | ✅ | tests/diff (ENABLE_AUDIT_LOGGING=true) |
 | Prisma migrations (`migrate deploy` bookkeeping, checksums) | prisma + docker-entrypoint.sh | src/db.rs, src/main.rs | ✅ | schema identical to Prisma's (see Verification) |
@@ -131,17 +131,17 @@ Everything below was checked against upstream; none is visible to the shipped fr
   backend behind a cargo feature; nothing in the SQLite path would change.
 
 **HTTP surface**
-- No `Server: nginx/…` header (we do not impersonate nginx); header names are lowercase
-  (HTTP/1.1 header names are case-insensitive).
-- `GET /export/excalidash` is sent with `Content-Length` instead of chunked encoding
-  (same headers and bytes otherwise).
+- Header names are sent lowercase. Header names are case-insensitive (RFC 9110), and the live
+  path goes through Cloudflare, which speaks HTTP/2/3 to browsers where names are always
+  lowercase, so clients cannot observe a difference. (Bundled mode does send nginx's
+  `Server: nginx/1.31.6`, and the export is streamed chunked like upstream.)
+- 204 responses carry no `Content-Length: 0` (Express/cors add it; RFC 9110 forbids it and
+  hyper strips it).
 - HTTPS redirect URLs keep the `/api` prefix; upstream's backend sees the stripped path and
   redirects to `/<path>` without it (an upstream bug behind nginx).
 - Express routing quirks not reproduced: case-insensitive paths, and Express's automatic
   `OPTIONS` 200 + `Allow` response for requests from a *disallowed* origin (allowed origins get
   the same 204 preflight as upstream).
-- Socket.IO responses don't get nginx's server-level security headers, and the Socket.IO
-  server sends no CORS headers (the frontend is same-origin).
 
 **Static frontend (nginx emulation)**
 - JS/CSS are stored pre-gzipped in the image (`*.gz` only) and sent compressed to gzip clients
@@ -156,9 +156,8 @@ Everything below was checked against upstream; none is visible to the shipped fr
 - Non-production zod validation `details` arrays are approximations (production bodies,
   which this deployment uses, match exactly).
 - Link-share `expiresAt` accepts ISO-8601 variants rather than everything JS `Date` parses.
-- OIDC: ES512/ES256K ID tokens are rejected (`jsonwebtoken` lacks them); encrypted ID tokens /
-  JARM are rejected (upstream never configures them); OIDC HTTP calls use a dedicated client
-  (no redirects, 3.5 s timeout, openid-client User-Agent) like upstream.
+- OIDC: encrypted ID tokens / JARM are rejected (upstream never configures them). ES512 and
+  ES256K are verified with RustCrypto (`p521`, `k256`) since `jsonwebtoken` lacks them.
 - S3: only explicit `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` are used (no AWS profile /
   instance-role chain); server-side S3 calls use short-lived presigned URLs; S3 error texts
   come from the service XML rather than the AWS SDK.
@@ -185,7 +184,8 @@ Everything below was checked against upstream; none is visible to the shipped fr
 | lettre (rustls) | SMTP password-reset delivery (nodemailer equivalent) |
 | rusty-s3 | S3 request signing without the AWS SDK |
 | ammonia | HTML/SVG sanitisation (DOMPurify equivalent) |
-| jsonwebtoken (rust_crypto) | HS256 sessions + OIDC ID-token verification (RS/PS/ES/EdDSA) |
+| jsonwebtoken (rust_crypto) | HS256 sessions + OIDC ID-token verification (RS/PS/ES256/ES384/EdDSA) |
+| p521, k256 (ecdsa only) | OIDC ES512 / ES256K ID tokens (not covered by jsonwebtoken) |
 | bcrypt, scrypt | Node-compatible password hashes and API-key hashes |
 | zip (flate2) | `.excalidash` archives compatible with JSZip/archiver |
 | brotli | snapshot field codec (`br1:`), Node zlib-compatible |
